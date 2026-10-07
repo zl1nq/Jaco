@@ -79,7 +79,8 @@ public final class Main {
                 sandbox,
                 workspaceRoot,
                 config.effectiveShell(),
-                config.effectiveMaxIterations());
+                config.effectiveMaxIterations(),
+                config.effectiveContextLimit());
         agent.start();
 
         new ConsoleApp(agent).run();

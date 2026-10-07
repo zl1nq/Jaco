@@ -11,10 +11,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -62,6 +64,38 @@ public final class SessionStore {
             Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
             throw new UncheckedIOException("会话保存失败: " + target, e);
+        }
+    }
+
+    /** 上下文压缩归档文件（JSONL，追加式）。 */
+    public Path archivePath(Session session) {
+        return dir.resolve(session.id() + ".archive.jsonl");
+    }
+
+    /** 把被压缩移出的消息追加到归档文件。 */
+    public void appendArchive(Session session, List<Message> messages) {
+        if (messages.isEmpty()) {
+            return;
+        }
+        try (var writer = Files.newBufferedWriter(archivePath(session), StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+            for (Message m : messages) {
+                writer.write(mapper.writeValueAsString(m));
+                writer.write("\n");
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("归档写入失败: " + archivePath(session), e);
+        }
+    }
+
+    /** 把单个超大工具输出追加到归档文件。 */
+    public void appendArchivedOutput(Session session, String output) {
+        try (var writer = Files.newBufferedWriter(archivePath(session), StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+            writer.write(mapper.writeValueAsString(Map.of("archived", "tool_output", "content", output)));
+            writer.write("\n");
+        } catch (IOException e) {
+            throw new UncheckedIOException("归档写入失败: " + archivePath(session), e);
         }
     }
 

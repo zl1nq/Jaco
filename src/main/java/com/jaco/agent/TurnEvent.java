@@ -25,6 +25,10 @@ public sealed interface TurnEvent {
     record ApprovalRequest(String tool, String detail, Consumer<String> resolver) implements TurnEvent {
     }
 
+    /** 非正文的状态提示（如上下文压缩进度）。 */
+    record Notice(String text) implements TurnEvent {
+    }
+
     record Done(Usage usage,
                 String finishReason,
                 boolean interrupted,

@@ -36,6 +36,9 @@ providers:
 - **Ctrl+C** 中断本轮：取消流、杀命令子进程、拒绝待确认操作，已生成部分保留进会话
 - `/help` `/new` `/exit`；会话自动落盘到 `~/.jaco/sessions/`，启动自动恢复最近一次
 - 单轮最大 LLM 迭代次数 `max_iterations`（默认 25）防失控
+- **上下文压缩**：轮开始时检查，超过 `context_limit` 的 70% 触发（目标压到 40%），四级阶梯——
+  巨型工具输出落盘留预览 → 旧轮工具结果置占位 → 旧轮整体归档 JSONL → LLM 摘要兜底；
+  最近 2 轮完整保护，tool_calls/tool_result 配对原子不切断
 - 日志只写 `~/.jaco/logs/`（stdout 属于 TUI）
 
 ## 架构（分包即边界，llm/agent 不得依赖 tui）
@@ -43,6 +46,7 @@ providers:
 ```
 tui     JLine 3 REPL：消费 TurnEvent 渲染、确认交互、Ctrl+C、命令注册表
 agent   AgentRunner：驱动工具循环，吐 TurnEvent 事件流（Delta/ToolCall*/ApprovalRequest/Done）
+        ContextCompactor：上下文压缩四级阶梯（轮开始触发，循环本体不感知）
 llm     手写 OpenAI 兼容 SSE 客户端：pull 模型流、tool_calls 增量累积、重试、取消
 tool    Tool 接口 + ToolRegistry（Schema/Handler 分离）+ 5 个内置工具 + PermissionHook + 路径沙箱
 render  MarkdownRenderer（按行状态机）+ CodeHighlighter（五语言词法）+ Theme 调色板

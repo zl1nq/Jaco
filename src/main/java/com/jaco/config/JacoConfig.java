@@ -13,6 +13,7 @@ public record JacoConfig(
         @JsonProperty("log_level") String logLevel,
         String shell,
         @JsonProperty("max_iterations") Integer maxIterations,
+        @JsonProperty("context_limit") Long contextLimit,
         WorkspaceConfig workspace,
         Map<String, ProviderConfig> providers) {
 
@@ -29,6 +30,11 @@ public record JacoConfig(
 
     public int effectiveMaxIterations() {
         return maxIterations == null || maxIterations < 1 ? 25 : maxIterations;
+    }
+
+    /** 模型上下文窗口大小（tokens），决定压缩触发点（70%）与目标（40%）。 */
+    public long effectiveContextLimit() {
+        return contextLimit == null || contextLimit < 1024 ? 65536 : contextLimit;
     }
 
     /** shell 取值：auto / bash / cmd / powershell，默认 auto。 */

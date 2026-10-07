@@ -49,7 +49,9 @@ public final class AgentRunner {
     private final String configuredSystemPrompt;
     private final String shellChoice;
     private final int maxIterations;
+    private final long contextLimit;
     private Session session;
+    private long lastPromptTokens;
 
     public AgentRunner(OpenAiCompatClient client,
                        ProviderConfig provider,
@@ -60,7 +62,8 @@ public final class AgentRunner {
                        ToolSandbox sandbox,
                        Path workspaceRoot,
                        String shellChoice,
-                       int maxIterations) {
+                       int maxIterations,
+                       long contextLimit) {
         this.client = client;
         this.provider = provider;
         this.hooks = hooks;
@@ -71,6 +74,7 @@ public final class AgentRunner {
         this.configuredSystemPrompt = configuredSystemPrompt;
         this.shellChoice = shellChoice;
         this.maxIterations = Math.max(1, maxIterations);
+        this.contextLimit = contextLimit;
     }
 
     public void start() {
@@ -115,6 +119,15 @@ public final class AgentRunner {
             }
             session.messages().add(Message.user(effective));
 
+            // 压缩检查发生在轮开始（循环外一层，循环本体不感知）
+            ContextCompactor compactor = new ContextCompactor(sessions, session, contextLimit);
+            var outcome = compactor.compactIfNeeded(session.messages(), lastPromptTokens,
+                    notice -> handle.emit(new TurnEvent.Notice(notice)), this::summarizeOldMessages);
+            if (outcome.compacted()) {
+                sessions.save(session);
+                lastPromptTokens = outcome.tokensAfter();
+            }
+
             Usage totalUsage = null;
             String finishReason = null;
             Throwable error = null;
@@ -142,6 +155,7 @@ public final class AgentRunner {
                     IterationResult result = consumeStream(stream, handle);
                     if (result.usage() != null) {
                         totalUsage = totalUsage == null ? result.usage() : mergeUsage(totalUsage, result.usage());
+                        lastPromptTokens = result.usage().promptTokens();
                     }
                     if (result.error() != null) {
                         error = result.error();
@@ -288,6 +302,71 @@ public final class AgentRunner {
                 a.promptTokens() + b.promptTokens(),
                 a.completionTokens() + b.completionTokens(),
                 a.totalTokens() + b.totalTokens());
+    }
+
+    /** 压缩第 ④ 步的摘要调用：同步消费一次流式请求。失败时抛出，由压缩器降级为归档标记。 */
+    private String summarizeOldMessages(List<Message> oldMessages) {
+        StringBuilder transcript = new StringBuilder();
+        for (Message m : oldMessages) {
+            String who = switch (m.role()) {
+                case USER -> "用户";
+                case ASSISTANT -> "assistant";
+                case TOOL -> "工具结果";
+                case SYSTEM -> "system";
+            };
+            String text = m.content() != null ? m.content() : "";
+            if (m.toolCalls() != null) {
+                StringBuilder calls = new StringBuilder();
+                for (var tc : m.toolCalls()) {
+                    if (calls.length() > 0) {
+                        calls.append("; ");
+                    }
+                    calls.append(tc.function().name()).append("(")
+                            .append(tc.function().arguments() != null && tc.function().arguments().length() > 200
+                                    ? tc.function().arguments().substring(0, 200) + "…"
+                                    : tc.function().arguments())
+                            .append(")");
+                }
+                text = text + "[调用工具: " + calls + "]";
+            }
+            if (text.length() > 4000) {
+                text = text.substring(0, 4000) + "…(截断)";
+            }
+            transcript.append(who).append(": ").append(text.replace('\n', ' ')).append("\n");
+        }
+        ChatRequest request = new ChatRequest(
+                provider.model(),
+                List.of(
+                        Message.system("""
+                                你是对话摘要器。把对话历史总结成结构化要点，供后续对话作为上下文使用。
+                                必须包含：用户的当前目标、已做出的关键决定、已完成的文件改动或执行过的命令、未完成事项。
+                                只输出要点，使用简洁中文，不要客套。"""),
+                        Message.user(transcript.toString())),
+                0.3,
+                true,
+                new ChatRequest.StreamOptions(true),
+                null);
+        try {
+            ChatStream stream = client.chatStream(request);
+            StringBuilder summary = new StringBuilder();
+            while (true) {
+                StreamChunk chunk = stream.poll(1000);
+                if (chunk instanceof StreamChunk.Delta d) {
+                    summary.append(d.text());
+                } else if (chunk instanceof StreamChunk.Done || chunk instanceof StreamChunk.Error e) {
+                    if (chunk instanceof StreamChunk.Error err) {
+                        throw new IllegalStateException(err.message());
+                    }
+                    break;
+                }
+            }
+            return summary.toString();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("摘要被中断", e);
+        } catch (IOException e) {
+            throw new IllegalStateException("摘要调用失败: " + e.getMessage(), e);
+        }
     }
 
     private List<Message> buildMessages() {

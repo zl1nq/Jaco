@@ -180,6 +180,10 @@ public final class ConsoleApp {
                     for (int i = 1; i < lines.length; i++) {
                         println(ANSI_DIM + "  │ " + lines[i] + ANSI_RESET);
                     }
+                } else if (event instanceof TurnEvent.Notice n) {
+                    // 暗色状态行；spinner 在下一行继续（sawOutput 仍为 false 时）
+                    spinner.stop();
+                    rawPrint(ANSI_DIM + n.text() + ANSI_RESET + "\n");
                 } else if (event instanceof TurnEvent.ApprovalRequest a) {
                     // 退出 raw mode 才能用 LineReader 正常读入
                     terminal.writer().flush();
