@@ -1,11 +1,14 @@
 package com.jaco.render;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
  * 单行词法着色（不做语法树）：字符串/注释/数字/关键词/注解。
  * 多行结构（块注释、三引号）按行近似——单行内的规则足够覆盖终端阅读场景。
+ * 输出 Span 序列，颜色为语义色。
  */
 final class CodeHighlighter {
 
@@ -56,30 +59,30 @@ final class CodeHighlighter {
         return !langKey.isEmpty();
     }
 
-    /** 渲染单行代码（不含换行）。不认识的语言返回原文。 */
-    String highlight(String line) {
+    /** 渲染单行代码（不含换行）为带样式的 Span。不认识的语言返回单段原文。 */
+    List<Span> highlight(String line) {
         if (!supported() || line.isEmpty()) {
-            return line;
+            return List.of(Span.plain(line));
         }
-        StringBuilder out = new StringBuilder();
+        List<Span> out = new ArrayList<>();
         int i = 0;
         int len = line.length();
         while (i < len) {
             char c = line.charAt(i);
 
-            // 注释起始
+            // 注释起始（到行尾）
             if (c == '#' && hashComments && (i == 0 || line.charAt(i - 1) != '$')) {
-                out.append(Theme.COMMENT).append(Theme.ITALIC).append(line, i, len).append(Theme.RESET);
-                return out.toString();
+                out.add(Span.of(line.substring(i), Color.COMMENT).withItalic());
+                return out;
             }
             if (c == '/' && i + 1 < len && line.charAt(i + 1) == '/' && !isJson) {
-                out.append(Theme.COMMENT).append(Theme.ITALIC).append(line, i, len).append(Theme.RESET);
-                return out.toString();
+                out.add(Span.of(line.substring(i), Color.COMMENT).withItalic());
+                return out;
             }
             if (c == '/' && i + 1 < len && line.charAt(i + 1) == '*' && !isJson) {
                 int close = line.indexOf("*/", i + 2);
                 int end = close >= 0 ? close + 2 : len;
-                out.append(Theme.COMMENT).append(Theme.ITALIC).append(line, i, end).append(Theme.RESET);
+                out.add(Span.of(line.substring(i, end), Color.COMMENT).withItalic());
                 i = end;
                 continue;
             }
@@ -99,14 +102,15 @@ final class CodeHighlighter {
                     j++;
                 }
                 String text = line.substring(i, Math.min(j, len));
+                Color color = Color.STRING;
                 if (isJson) {
                     // "key": 的键染天蓝，纯值染草绿
                     String rest = line.substring(Math.min(j, len)).stripLeading();
-                    out.append(rest.startsWith(":") ? Theme.JSON_KEY : Theme.STRING)
-                            .append(text).append(Theme.RESET);
-                } else {
-                    out.append(Theme.STRING).append(text).append(Theme.RESET);
+                    if (rest.startsWith(":")) {
+                        color = Color.JSON_KEY;
+                    }
                 }
+                out.add(Span.of(text, color));
                 i = j;
                 continue;
             }
@@ -117,7 +121,7 @@ final class CodeHighlighter {
                 while (j < len && Character.isJavaIdentifierPart(line.charAt(j))) {
                     j++;
                 }
-                out.append(Theme.ANNOTATION).append(line, i, j).append(Theme.RESET);
+                out.add(Span.of(line.substring(i, j), Color.ANNOTATION));
                 i = j;
                 continue;
             }
@@ -130,9 +134,9 @@ final class CodeHighlighter {
                 }
                 String word = line.substring(i, j);
                 if (keywords.contains(word)) {
-                    out.append(Theme.KEYWORD).append(word).append(Theme.RESET);
+                    out.add(Span.of(word, Color.KEYWORD));
                 } else {
-                    out.append(word);
+                    out.add(Span.plain(word));
                 }
                 i = j;
                 continue;
@@ -145,14 +149,14 @@ final class CodeHighlighter {
                         || line.charAt(j) == '_')) {
                     j++;
                 }
-                out.append(Theme.NUMBER).append(line, i, j).append(Theme.RESET);
+                out.add(Span.of(line.substring(i, j), Color.NUMBER));
                 i = j;
                 continue;
             }
 
-            out.append(c);
+            out.add(Span.plain(String.valueOf(c)));
             i++;
         }
-        return out.toString();
+        return out;
     }
 }

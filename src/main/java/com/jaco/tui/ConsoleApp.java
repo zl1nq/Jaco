@@ -5,6 +5,8 @@ import com.jaco.agent.TurnEvent;
 import com.jaco.agent.TurnHandle;
 import com.jaco.llm.Usage;
 import com.jaco.render.MarkdownRenderer;
+import com.jaco.render.Ansi;
+import com.jaco.render.Span;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -15,6 +17,7 @@ import org.jline.terminal.TerminalBuilder;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -157,13 +160,14 @@ public final class ConsoleApp {
                         rawPrint(ANSI_CYAN + BOLD + "jaco" + ANSI_RESET + ANSI_DIM + " » " + ANSI_RESET);
                         replyLabeled = true;
                     }
-                    // markdown 渲染只处理完整行；不完整的尾行留在缓冲区
+                    // markdown 渲染只处理完整行；不完整的尾行留在缓冲区；
+                    // 返回 null 表示该行进入了表格缓冲
                     pending.append(d.text());
                     int nl;
                     while ((nl = pending.indexOf("\n")) >= 0) {
-                        String line = pending.substring(0, nl);
+                        String text = pending.substring(0, nl);
                         pending.delete(0, nl + 1);
-                        rawPrint(renderer.renderLine(line) + "\n");
+                        printRendered(renderer.renderLine(text));
                     }
                 } else if (event instanceof TurnEvent.ToolCallStart s) {
                     if (!sawOutput) {
@@ -249,13 +253,36 @@ public final class ConsoleApp {
         }
     }
 
-    /** 把不完整的尾行按完整行渲染输出（Done/中断/工具开始前调用）。 */
+    /** 把不完整的尾行按完整行渲染输出，并冲出渲染器的表格/挂起缓冲（Done/中断/工具开始前调用）。 */
     private void flushPending(MarkdownRenderer renderer, StringBuilder pending) {
+        boolean printed = false;
         if (pending.length() > 0) {
             String rest = pending.toString();
             pending.setLength(0);
-            rawPrint(renderer.renderLine(rest) + "\n");
+            printed = printRendered(renderer.renderLine(rest)) | printed;
         }
+        List<List<Span>> buffered = renderer.flush();
+        if (buffered != null) {
+            for (List<Span> l : buffered) {
+                rawPrint(Ansi.render(l) + "\n");
+            }
+            printed = true;
+        }
+        if (!printed && !atLineStart) {
+            // 渲染器无输出但光标悬在行中时保证换行
+            rawPrint("\n");
+        }
+    }
+
+    /** 渲染结果可能为 null（表格缓冲）；返回是否有实际输出。 */
+    private boolean printRendered(List<List<Span>> lines) {
+        if (lines == null) {
+            return false;
+        }
+        for (List<Span> l : lines) {
+            rawPrint(Ansi.render(l) + "\n");
+        }
+        return true;
     }
 
     /** raw mode 下 \n 不会回车，统一补 \r。 */
