@@ -105,7 +105,8 @@ public final class OpenAiCompatClient {
                 if (choices.isArray() && !choices.isEmpty()) {
                     JsonNode first = choices.get(0);
                     JsonNode content = first.path("delta").get("content");
-                    if (content != null && content.isTextual() && !content.isEmpty()) {
+                    // 注意不能用 JsonNode.isEmpty()：对标量节点它等价于 size()==0，恒为 true
+                    if (content != null && content.isTextual() && !content.textValue().isEmpty()) {
                         stream.queue().put(new StreamChunk.Delta(content.textValue()));
                     }
                     JsonNode finish = first.get("finish_reason");

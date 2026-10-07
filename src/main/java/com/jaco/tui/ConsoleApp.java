@@ -170,7 +170,10 @@ public final class ConsoleApp {
         } catch (IOException e) {
             error = e;
         } finally {
-            spinner.stop();
+            // 内容已开始输出时 spinner 早已停止，再清行会把刚打印的回复擦掉
+            if (content.isEmpty()) {
+                spinner.stop();
+            }
             terminal.writer().flush();
             terminal.setAttributes(savedAttributes);
         }
