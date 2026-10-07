@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
@@ -282,11 +283,20 @@ public final class AgentRunner {
      * 子 agent 入口（由 TaskTool 调用，运行在父 loop 线程）：子 loop 跑在虚拟线程上，
      * 本线程同步等待；父轮取消的中断会到达本线程，此时 interrupt 子线程并限时收尸。
      * 子 agent 有独立消息列表（不进 session、不写父归档），只有最终报告回到父模型。
+     * 开始/结束各发一行 Notice（经父 loop 线程的事件槽），中间保持静默。
      */
     public String runSubagent(String prompt, BooleanSupplier cancelled) {
+        TurnEventSink sink = TurnEventSink.current();
+        if (sink != null) {
+            String brief = prompt.replace('\n', ' ').strip();
+            sink.emit(new TurnEvent.Notice("⟣ 子任务开始: "
+                    + (brief.length() > 50 ? brief.substring(0, 50) + "…" : brief)));
+        }
+        long start = System.currentTimeMillis();
+        AtomicInteger iterations = new AtomicInteger();
         AtomicReference<String> report = new AtomicReference<>();
         Thread worker = Thread.ofVirtual().name("jaco-subagent")
-                .start(() -> report.set(subagentLoop(prompt, cancelled)));
+                .start(() -> report.set(subagentLoop(prompt, cancelled, iterations)));
         boolean interrupted = false;
         while (worker.isAlive()) {
             try {
@@ -307,18 +317,24 @@ public final class AgentRunner {
                 log.warn("子 agent 线程未在 2s 内退出");
             }
         }
+        if (sink != null) {
+            long secs = (System.currentTimeMillis() - start) / 1000;
+            sink.emit(new TurnEvent.Notice("⟣ 子任务结束: 耗时 " + secs + "s / "
+                    + iterations.get() + " 次迭代"));
+        }
         String out = report.get();
         return out != null ? out : "(子任务被中断)";
     }
 
     /** 子 agent 的精简 loop：无压缩、无 session、无事件；撞错/被取消都以文案终态返回。 */
-    private String subagentLoop(String prompt, BooleanSupplier cancelled) {
+    private String subagentLoop(String prompt, BooleanSupplier cancelled, AtomicInteger iterations) {
         List<Message> messages = new ArrayList<>();
         messages.add(Message.system(SUBAGENT_SYSTEM_PROMPT));
         messages.add(Message.user(prompt));
         List<ToolDefinition> defs = registry.definitions(SUBAGENT_TOOLS);
         try {
             for (int i = 0; i < maxIterations && !cancelled.getAsBoolean(); i++) {
+                iterations.set(i + 1);
                 ChatStream stream = null;
                 try {
                     ChatRequest request = new ChatRequest(provider.model(), messages, provider.temperature(),

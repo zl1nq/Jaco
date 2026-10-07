@@ -136,4 +136,34 @@ class AgentRunnerSubagentTest {
         FakeClient client = new FakeClient(List.of(s1));
         assertEquals("直接答案", runner(client).runSubagent("问一句", () -> false));
     }
+
+    @Test
+    void emitsStartAndEndNoticesViaParentSink() throws Exception {
+        FakeClient client = new FakeClient(List.of(TestStreams.of(
+                new StreamChunk.Delta("答案"),
+                new StreamChunk.Done("stop", null))));
+        AgentRunner agent = runner(client);
+
+        TurnHandle handle = new TurnHandle();
+        Thread caller = Thread.ofVirtual().start(() -> {
+            TurnEventSink.install(handle);
+            try {
+                agent.runSubagent("帮我调研", () -> false);
+            } finally {
+                TurnEventSink.clear();
+            }
+        });
+        caller.join(10_000);
+
+        List<String> notices = new ArrayList<>();
+        TurnEvent event;
+        while ((event = handle.poll(50)) != null) {
+            if (event instanceof TurnEvent.Notice n) {
+                notices.add(n.text());
+            }
+        }
+        assertEquals(2, notices.size());
+        assertTrue(notices.get(0).startsWith("⟣ 子任务开始: 帮我调研"));
+        assertTrue(notices.get(1).startsWith("⟣ 子任务结束: 耗时 0s / 1 次迭代"));
+    }
 }
