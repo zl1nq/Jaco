@@ -14,13 +14,16 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 执行 shell 命令。超时 120s 杀进程树；输出截断保留末尾 50k（尾部是最新信息）；
- * stdout/stderr 合并。安全性由权限确认闸门负责，这里只管执行。
+ * 执行 shell 命令。超时 120s 杀进程树；输出读到上限即停止读取（防止无限输出撑爆内存），
+ * 回填前由 AgentRunner 的闸门决定落盘/预览；stdout/stderr 合并。
+ * 安全性由权限确认闸门负责，这里只管执行。
  */
 public final class RunCommandTool implements Tool {
 
     private static final long TIMEOUT_SECONDS = 120;
     private static final int MAX_OUTPUT_CHARS = 50_000;
+    /** 允许多读的余量，避免恰好卡在阈值上反复提前停止。 */
+    private static final int DRAIN_SLACK = 8_192;
 
     @Override
     public String name() {
@@ -62,7 +65,8 @@ public final class RunCommandTool implements Tool {
         ctx.currentProcess().set(process);
 
         StringBuilder output = new StringBuilder();
-        Thread reader = new Thread(() -> drain(process, output));
+        java.util.concurrent.atomic.AtomicBoolean stoppedReading = new java.util.concurrent.atomic.AtomicBoolean(false);
+        Thread reader = new Thread(() -> drain(process, output, stoppedReading));
         reader.setDaemon(true);
         reader.start();
 
@@ -75,6 +79,9 @@ public final class RunCommandTool implements Tool {
         reader.join(2000);
 
         String text = output.toString();
+        if (stoppedReading.get()) {
+            text += "\n(输出超过上限，已停止读取；命令可能仍在产出)";
+        }
         if (text.length() > MAX_OUTPUT_CHARS) {
             text = "(输出过大，仅保留末尾 " + MAX_OUTPUT_CHARS + " 字符)\n"
                     + text.substring(text.length() - MAX_OUTPUT_CHARS);
@@ -85,8 +92,8 @@ public final class RunCommandTool implements Tool {
         return "(exit code " + (finished ? process.exitValue() : -1) + ")\n" + text;
     }
 
-    /** 输出编码：Windows 下 bash/cmd 的控制台输出多为 GBK，UTF-8 环境则按 UTF-8。 */
-    private void drain(Process process, StringBuilder output) {
+    /** 输出编码：Windows 下 bash/cmd 的控制台输出多为 GBK，UTF-8 环境则按 UTF-8。读到上限即停。 */
+    private void drain(Process process, StringBuilder output, java.util.concurrent.atomic.AtomicBoolean stopped) {
         Charset charset = System.getProperty("os.name").toLowerCase().contains("win")
                 ? Charset.defaultCharset()
                 : StandardCharsets.UTF_8;
@@ -94,10 +101,14 @@ public final class RunCommandTool implements Tool {
             char[] buf = new char[4096];
             int n;
             while ((n = r.read(buf)) >= 0) {
+                if (output.length() >= MAX_OUTPUT_CHARS + DRAIN_SLACK) {
+                    stopped.set(true);
+                    break;
+                }
                 output.append(buf, 0, n);
             }
         } catch (Exception ignored) {
-            // 进程被杀时流会异常关闭，已有内容仍然有效
+            // 进程被杀或流提前关闭时，已读内容仍然有效
         }
     }
 

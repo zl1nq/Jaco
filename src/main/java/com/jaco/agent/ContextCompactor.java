@@ -11,14 +11,15 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * 上下文压缩器（教程 s08 四步法的 Java 落地）。在轮开始时调用，循环本体不感知：
+ * 上下文压缩器。在轮开始时调用，循环本体不感知。单条超大工具输出由 AgentRunner 的
+ * 回填闸门在入口处截断落盘（不进入压缩周期），这里只管整轮级别的瘦身：
  *
- * <p>① 巨型 tool_result 落盘留预览（对最近轮也生效，8k 字符即可观）
- * ② 旧轮（最近 2 轮之外）的 tool_result 替换为占位——tool_calls/tool_result 配对原子保留
- * ③ 中段整轮归档 JSONL，原位置留标记消息
- * ④ LLM 摘要兜底：③ 仍不达标时总结归档内容替换标记
+ * <p>① 旧轮（最近 2 轮之外）的 tool_result 替换为占位——tool_calls/tool_result 配对原子保留
+ * ② 中段整轮归档 JSONL，原位置留标记
+ * ③ LLM 摘要兜底：② 仍不达标时总结归档内容替换标记
  *
  * <p>度量：上次调用的真实 promptTokens 与字符估算取大者；触发 70%，目标 40%。
+ * 另有 forceCompact：provider 报上下文超限时跳过触发阈值直接压，作为最后保险。
  */
 public final class ContextCompactor {
 
@@ -27,8 +28,6 @@ public final class ContextCompactor {
     private static final double TRIGGER_RATIO = 0.7;
     private static final double TARGET_RATIO = 0.4;
     private static final int KEEP_RECENT_TURNS = 2;
-    private static final int BIG_TOOL_RESULT_CHARS = 8_000;
-    private static final int PREVIEW_CHARS = 500;
 
     private final SessionStore sessions;
     private final com.jaco.session.Session session;
@@ -62,32 +61,24 @@ public final class ContextCompactor {
         return new Outcome(true, before, after);
     }
 
+    /** provider 报上下文超限后的强制压缩：跳过触发阈值，直接压到目标比例。 */
+    public Outcome forceCompact(List<Message> messages, Consumer<String> notices, Summarizer summarizer) {
+        long before = estimateTokens(messages);
+        notices.accept("⟲ 上下文超限，正在强制压缩…");
+        long after = compact(messages, (long) (contextLimit * TARGET_RATIO), summarizer);
+        log.info("强制压缩: {} -> {} tokens (limit={})", before, after, contextLimit);
+        notices.accept("⟲ 已强制压缩: " + before + " → " + after + " tokens");
+        return new Outcome(true, before, after);
+    }
+
     private long compact(List<Message> messages, long target, Summarizer summarizer) {
         List<List<Message>> blocks = splitTurns(messages);
 
-        // ① 巨型 tool_result 落盘留预览（含最近轮——单条 8k 字符无论何时都是可观的）
-        for (List<Message> block : blocks) {
-            for (int i = 0; i < block.size(); i++) {
-                Message m = block.get(i);
-                if (m.role() == Role.TOOL && m.content() != null && m.content().length() > BIG_TOOL_RESULT_CHARS) {
-                    sessions.appendArchivedOutput(session, m.content());
-                    block.set(i, Message.toolResult(m.toolCallId(),
-                            "(工具输出过大已存档，前 " + PREVIEW_CHARS + " 字符如下)\n"
-                                    + m.content().substring(0, PREVIEW_CHARS)
-                                    + "\n(其余内容已存档，可用 recall 工具按关键词取回)"));
-                }
-            }
-        }
-        long tokens = rebuild(messages, blocks);
-        if (tokens <= target) {
-            return tokens;
-        }
-
         if (blocks.size() <= KEEP_RECENT_TURNS) {
-            return tokens;
+            return rebuild(messages, blocks);
         }
 
-        // ② 旧轮的 tool_result 替换为占位（配对消息保留，块作为原子组不拆）
+        // ① 旧轮的 tool_result 替换为占位（配对消息保留，块作为原子组不拆）
         List<List<Message>> recent = blocks.subList(blocks.size() - KEEP_RECENT_TURNS, blocks.size());
         List<List<Message>> old = new ArrayList<>(blocks.subList(0, blocks.size() - KEEP_RECENT_TURNS));
         for (List<Message> block : old) {
@@ -98,12 +89,12 @@ public final class ContextCompactor {
                 }
             }
         }
-        tokens = rebuild(messages, concat(old, recent));
+        long tokens = rebuild(messages, concat(old, recent));
         if (tokens <= target) {
             return tokens;
         }
 
-        // ③ 旧轮整体归档，原位置留标记
+        // ② 旧轮整体归档，原位置留标记
         List<Message> oldFlat = flatten(old);
         sessions.appendArchive(session, oldFlat);
         List<Message> replacement = new ArrayList<>();
@@ -113,7 +104,7 @@ public final class ContextCompactor {
             return tokens;
         }
 
-        // ④ LLM 摘要兜底：总结归档内容替换标记
+        // ③ LLM 摘要兜底：总结归档内容替换标记
         if (summarizer != null) {
             try {
                 String summary = summarizer.summarize(oldFlat);

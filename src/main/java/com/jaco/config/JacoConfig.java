@@ -16,6 +16,7 @@ public record JacoConfig(
         String shell,
         @JsonProperty("max_iterations") Integer maxIterations,
         @JsonProperty("context_limit") Long contextLimit,
+        @JsonProperty("max_tool_result_chars") Integer maxToolResultChars,
         WorkspaceConfig workspace,
         Map<String, ProviderConfig> providers) {
 
@@ -37,6 +38,11 @@ public record JacoConfig(
     /** 模型上下文窗口大小（tokens），决定压缩触发点（70%）与目标（40%）。 */
     public long effectiveContextLimit() {
         return contextLimit == null || contextLimit < 1024 ? 65536 : contextLimit;
+    }
+
+    /** 单条工具输出回填消息前的硬上限（字符），超限整条落盘归档、留头尾预览。 */
+    public int effectiveMaxToolResultChars() {
+        return maxToolResultChars == null || maxToolResultChars < 1000 ? 8000 : maxToolResultChars;
     }
 
     /** shell 取值：auto / bash / cmd / powershell，默认 auto。 */

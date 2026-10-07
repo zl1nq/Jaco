@@ -50,6 +50,7 @@ public final class AgentRunner {
     private final String shellChoice;
     private final int maxIterations;
     private final long contextLimit;
+    private final int maxToolResultChars;
     private Session session;
     private long lastPromptTokens;
 
@@ -63,7 +64,8 @@ public final class AgentRunner {
                        Path workspaceRoot,
                        String shellChoice,
                        int maxIterations,
-                       long contextLimit) {
+                       long contextLimit,
+                       int maxToolResultChars) {
         this.client = client;
         this.provider = provider;
         this.hooks = hooks;
@@ -75,6 +77,7 @@ public final class AgentRunner {
         this.shellChoice = shellChoice;
         this.maxIterations = Math.max(1, maxIterations);
         this.contextLimit = contextLimit;
+        this.maxToolResultChars = maxToolResultChars;
     }
 
     public void start() {
@@ -133,6 +136,7 @@ public final class AgentRunner {
             Throwable error = null;
             boolean interrupted = false;
             int iterations = 0;
+            boolean overflowRetried = false;
 
             while (!handle.isCancelled()) {
                 if (++iterations > maxIterations) {
@@ -158,6 +162,15 @@ public final class AgentRunner {
                         lastPromptTokens = result.usage().promptTokens();
                     }
                     if (result.error() != null) {
+                        // 上下文超限是可恢复的：强制压缩后重试一次（估算与真实 token 的偏差兜底）
+                        if (!overflowRetried && isContextOverflow(result.error())) {
+                            overflowRetried = true;
+                            var forced = compactor.forceCompact(session.messages(),
+                                    notice -> handle.emit(new TurnEvent.Notice(notice)), this::summarizeOldMessages);
+                            lastPromptTokens = forced.tokensAfter();
+                            sessions.save(session);
+                            continue;
+                        }
                         error = result.error();
                         break;
                     }
@@ -281,10 +294,34 @@ public final class AgentRunner {
                     ok = false;
                 }
             }
+            result = gateToolResult(result);
             session.messages().add(Message.toolResult(call.id(), result));
             hooks.onAfterToolCall(call, result);
             handle.emit(new TurnEvent.ToolCallEnd(name, ok, summarizeResult(result)));
         }
+    }
+
+    /**
+     * 单条工具输出的硬闸门：超限即整条落盘归档，回填头尾预览。在结果入口处生效，
+     * 不依赖轮开始的压缩周期——任何时刻消息列表里的单条 tool_result 都有上界。
+     */
+    private String gateToolResult(String result) {
+        if (result.length() <= maxToolResultChars) {
+            return result;
+        }
+        sessions.appendArchivedOutput(session, result);
+        return clipMiddle(result, maxToolResultChars / 2);
+    }
+
+    /** 头尾各留 keepEach 字符，中段以省略标记代替，并注明完整内容可 recall。 */
+    static String clipMiddle(String text, int keepEach) {
+        int head = Math.min(keepEach, text.length());
+        int tail = Math.min(keepEach, text.length());
+        return "(工具输出过大已存档，共 " + text.length() + " 字符，保留头尾各 " + head
+                + " 字符；完整内容可用 recall 工具取回)\n"
+                + text.substring(0, head)
+                + "\n…(中间省略)…\n"
+                + text.substring(text.length() - tail);
     }
 
     private String summarizeResult(String result) {
@@ -295,6 +332,17 @@ public final class AgentRunner {
         long lineCount = result.lines().count();
         String s = firstLine.length() > 100 ? firstLine.substring(0, 100) + "…" : firstLine;
         return lineCount > 1 ? s + " …(" + lineCount + " 行)" : s;
+    }
+
+    /** 识别"上下文超限"类错误：各家措辞不一，按关键词粗匹配。 */
+    private static boolean isContextOverflow(Throwable t) {
+        String msg = t.getMessage();
+        if (msg == null) {
+            return false;
+        }
+        String m = msg.toLowerCase();
+        return m.contains("context length") || m.contains("context_length") || m.contains("maximum context")
+                || m.contains("too long") || m.contains("too many tokens") || m.contains("reduce the length");
     }
 
     private Usage mergeUsage(Usage a, Usage b) {

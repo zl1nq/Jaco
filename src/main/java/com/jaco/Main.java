@@ -82,7 +82,8 @@ public final class Main {
                 workspaceRoot,
                 config.effectiveShell(),
                 config.effectiveMaxIterations(),
-                config.effectiveContextLimit());
+                config.effectiveContextLimit(),
+                config.effectiveMaxToolResultChars());
         agent.start();
 
         new ConsoleApp(agent).run();
