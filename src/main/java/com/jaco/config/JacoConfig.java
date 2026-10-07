@@ -1,12 +1,14 @@
 package com.jaco.config;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Map;
 
 /**
- * ~/.jaco/config.yaml 的绑定模型。
+ * ~/.jaco/config.yaml 的绑定模型。未知字段忽略（向前兼容：老版本读新配置不崩）。
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record JacoConfig(
         String active,
         @JsonProperty("system_prompt") String systemPrompt,
