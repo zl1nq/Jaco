@@ -11,6 +11,7 @@ import com.jaco.llm.OpenAiCompatClient;
 import com.jaco.llm.Role;
 import com.jaco.llm.StreamChunk;
 import com.jaco.llm.ToolCall;
+import com.jaco.llm.ToolDefinition;
 import com.jaco.llm.Usage;
 import com.jaco.session.Session;
 import com.jaco.session.SessionStore;
@@ -24,7 +25,10 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 /**
  * Agent loop 的宿主与驱动者。核心信条：循环本体保持最小——
@@ -35,9 +39,20 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class AgentRunner {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AgentRunner.class);
+
     public static final String DEFAULT_SYSTEM_PROMPT = """
             你是 jaco，一个运行在终端里的助手，可以调用工具读写文件、执行命令。
             回答简洁、直接，适合在命令行中阅读。
+            """;
+
+    /** 子 agent 的只读工具集；不含 task（禁止递归 spawn）与写/执行类工具。 */
+    private static final Set<String> SUBAGENT_TOOLS = Set.of("read_file", "list_dir", "grep", "recall");
+
+    private static final String SUBAGENT_SYSTEM_PROMPT = """
+            你是 jaco 的子 agent，被主 agent 委派执行一个只读调查任务。
+            你只能读取与搜索，不能修改任何文件、不能执行命令。高效探索，不要漫无目的。
+            完成后输出结论报告：直接给答案与证据（文件路径:行号 等可验证引用），不要过程叙述，不要寒暄。
             """;
 
     private final OpenAiCompatClient client;
@@ -195,7 +210,7 @@ public final class AgentRunner {
                     stream = client.chatStream(request);
                     handle.setCurrentStream(stream);
 
-                    IterationResult result = consumeStream(stream, handle);
+                    IterationResult result = consumeStream(stream, handle, handle::isCancelled);
                     if (result.usage() != null) {
                         totalUsage = totalUsage == null ? result.usage() : mergeUsage(totalUsage, result.usage());
                         lastPromptTokens = result.usage().promptTokens();
@@ -264,8 +279,130 @@ public final class AgentRunner {
         }
     }
 
-    /** 消费一次 LLM 流：转发正文增量、累积 tool_calls、聚合 usage。 */
-    private IterationResult consumeStream(ChatStream stream, TurnHandle handle) throws InterruptedException {
+    /**
+     * 子 agent 入口（由 TaskTool 调用，运行在父 loop 线程）：子 loop 跑在虚拟线程上，
+     * 本线程同步等待；父轮取消的中断会到达本线程，此时 interrupt 子线程并限时收尸。
+     * 子 agent 有独立消息列表（不进 session、不写父归档），只有最终报告回到父模型。
+     * 开始/结束各发一行 Notice（经父 loop 线程的事件槽），中间保持静默。
+     */
+    public String runSubagent(String prompt, BooleanSupplier cancelled) {
+        TurnEventSink sink = TurnEventSink.current();
+        if (sink != null) {
+            String brief = prompt.replace('\n', ' ').strip();
+            sink.emit(new TurnEvent.Notice("⟣ 子任务开始: "
+                    + (brief.length() > 50 ? brief.substring(0, 50) + "…" : brief)));
+        }
+        long start = System.currentTimeMillis();
+        AtomicInteger iterations = new AtomicInteger();
+        AtomicReference<String> report = new AtomicReference<>();
+        Thread worker = Thread.ofVirtual().name("jaco-subagent")
+                .start(() -> report.set(subagentLoop(prompt, cancelled, iterations)));
+        boolean interrupted = false;
+        while (worker.isAlive()) {
+            try {
+                worker.join(200);
+            } catch (InterruptedException e) {
+                interrupted = true;
+                break;
+            }
+        }
+        if (interrupted && worker.isAlive()) {
+            worker.interrupt();
+            try {
+                worker.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            if (worker.isAlive()) {
+                log.warn("子 agent 线程未在 2s 内退出");
+            }
+        }
+        if (sink != null) {
+            long secs = (System.currentTimeMillis() - start) / 1000;
+            sink.emit(new TurnEvent.Notice("⟣ 子任务结束: 耗时 " + secs + "s / "
+                    + iterations.get() + " 次迭代"));
+        }
+        String out = report.get();
+        return out != null ? out : "(子任务被中断)";
+    }
+
+    /** 子 agent 的精简 loop：无压缩、无 session、无事件；撞错/被取消都以文案终态返回。 */
+    private String subagentLoop(String prompt, BooleanSupplier cancelled, AtomicInteger iterations) {
+        List<Message> messages = new ArrayList<>();
+        messages.add(Message.system(SUBAGENT_SYSTEM_PROMPT));
+        messages.add(Message.user(prompt));
+        List<ToolDefinition> defs = registry.definitions(SUBAGENT_TOOLS);
+        try {
+            for (int i = 0; i < maxIterations && !cancelled.getAsBoolean(); i++) {
+                iterations.set(i + 1);
+                ChatStream stream = null;
+                try {
+                    ChatRequest request = new ChatRequest(provider.model(), messages, provider.temperature(),
+                            true, new ChatRequest.StreamOptions(true), defs);
+                    hooks.onBeforeRequest(request);
+                    stream = client.chatStream(request);
+                    IterationResult result = consumeStream(stream, null, cancelled);
+                    if (result.error() != null) {
+                        return "子任务失败: " + (result.error().getMessage() != null
+                                ? result.error().getMessage() : result.error().getClass().getSimpleName());
+                    }
+                    if (cancelled.getAsBoolean()) {
+                        return "(子任务被中断)";
+                    }
+                    List<ToolCall> calls = result.toolCalls();
+                    if (calls.isEmpty()) {
+                        return result.content().isBlank() ? "(子任务无输出)" : result.content();
+                    }
+                    messages.add(new Message(Role.ASSISTANT,
+                            result.content().isEmpty() ? null : result.content(), calls, null, null));
+                    executeSubagentTools(calls, messages, cancelled);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return "(子任务被中断)";
+                } finally {
+                    if (stream != null) {
+                        stream.cancel();
+                    }
+                }
+            }
+        } catch (IOException e) {
+            return "子任务失败: " + e.getMessage();
+        }
+        return cancelled.getAsBoolean() ? "(子任务被中断)" : "(子任务达到迭代上限 " + maxIterations + ")";
+    }
+
+    /** 子 agent 的工具执行：白名单外的调用直接拒绝回喂；超限只留头尾预览（不写父归档）。 */
+    private void executeSubagentTools(List<ToolCall> calls, List<Message> messages, BooleanSupplier cancelled) {
+        ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
+                new AtomicReference<>(), cancelled, sessions.archivePath(session));
+        for (ToolCall call : calls) {
+            String name = call.function().name() != null ? call.function().name() : "?";
+            String result;
+            if (!SUBAGENT_TOOLS.contains(name)) {
+                result = "ERROR: 子 agent 只允许只读工具 " + SUBAGENT_TOOLS;
+            } else {
+                try {
+                    result = registry.execute(call, ctx);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    result = "ERROR: interrupted by user";
+                } catch (Exception e) {
+                    result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                }
+            }
+            if (result.length() > maxToolResultChars) {
+                result = clipMiddle(result, maxToolResultChars / 2);
+            }
+            messages.add(Message.toolResult(call.id(), result));
+        }
+    }
+
+    /**
+     * 消费一次 LLM 流：转发正文增量、累积 tool_calls、聚合 usage。
+     * handle 为 null 时静默运行（子 agent）：不发事件，取消改查 cancelled。
+     */
+    private IterationResult consumeStream(ChatStream stream, TurnHandle handle,
+                                          BooleanSupplier cancelled) throws InterruptedException {
         StringBuilder content = new StringBuilder();
         ToolCallAccumulator accumulator = new ToolCallAccumulator();
         String finishReason = null;
@@ -274,7 +411,7 @@ public final class AgentRunner {
 
         while (true) {
             StreamChunk chunk = stream.poll(200);
-            if (handle.isCancelled()) {
+            if (cancelled.getAsBoolean()) {
                 break;
             }
             if (chunk == null) {
@@ -282,7 +419,9 @@ public final class AgentRunner {
             }
             if (chunk instanceof StreamChunk.Delta d) {
                 content.append(d.text());
-                handle.emit(new TurnEvent.Delta(d.text()));
+                if (handle != null) {
+                    handle.emit(new TurnEvent.Delta(d.text()));
+                }
             } else if (chunk instanceof StreamChunk.ToolCallDelta t) {
                 accumulator.add(t);
             } else if (chunk instanceof StreamChunk.Done d) {
@@ -290,13 +429,14 @@ public final class AgentRunner {
                 usage = d.usage();
                 break;
             } else if (chunk instanceof StreamChunk.Error e) {
-                if (!handle.isCancelled()) {
+                if (!cancelled.getAsBoolean()) {
                     error = e.cause() != null ? e.cause() : new RuntimeException(e.message());
                 }
                 break;
             }
         }
-        if (content.length() > 0 && !handle.isCancelled() && error == null && !accumulator.isEmpty()) {
+        if (handle != null && content.length() > 0 && !cancelled.getAsBoolean()
+                && error == null && !accumulator.isEmpty()) {
             // 少数模型在 tool_calls 响应里也夹带正文：保留进事件流但不进最终 assistant 消息
             handle.emit(new TurnEvent.Delta("\n"));
         }

@@ -62,6 +62,8 @@ public final class Main {
         registry.register(new RunCommandTool());
         registry.register(new GrepTool());
         registry.register(new RecallTool());
+        com.jaco.tool.builtin.TaskTool taskTool = new com.jaco.tool.builtin.TaskTool();
+        registry.register(taskTool);
 
         List<String> extraRoots = config.workspace() == null || config.workspace().extraRoots() == null
                 ? List.of()
@@ -85,6 +87,7 @@ public final class Main {
                 config.effectiveContextLimit(),
                 config.effectiveMaxToolResultChars());
         agent.start();
+        taskTool.bind(agent::runSubagent);
 
         new ConsoleApp(agent).run();
     }

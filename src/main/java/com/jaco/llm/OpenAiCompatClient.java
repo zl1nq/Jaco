@@ -24,7 +24,7 @@ import java.util.concurrent.ExecutionException;
  * 重试策略：连接失败/超时/429/5xx 指数退避重试（最多 3 次）；4xx 不重试；
  * 流中途断开不重试（内容已部分产出），以 Error 事件终结。
  */
-public final class OpenAiCompatClient {
+public class OpenAiCompatClient {
 
     private static final int MAX_ATTEMPTS = 3;
 
