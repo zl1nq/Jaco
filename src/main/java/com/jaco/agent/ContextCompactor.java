@@ -2,21 +2,26 @@ package com.jaco.agent;
 
 import com.jaco.llm.Message;
 import com.jaco.llm.Role;
+import com.jaco.llm.ToolCall;
 import com.jaco.session.SessionStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
  * 上下文压缩器。在轮开始时调用，循环本体不感知。单条超大工具输出由 AgentRunner 的
  * 回填闸门在入口处截断落盘（不进入压缩周期），这里只管整轮级别的瘦身：
  *
- * <p>① 旧轮（最近 2 轮之外）的 tool_result 替换为占位——tool_calls/tool_result 配对原子保留
- * ② 中段整轮归档 JSONL，原位置留标记
- * ③ LLM 摘要兜底：② 仍不达标时总结归档内容替换标记
+ * <p>① 旧轮（最近 2 轮之外）的 tool_result 替换为一行摘要占位（工具名 + 体量 + 首行）——
+ * tool_calls/tool_result 配对原子保留
+ * ② 中段整轮按原始内容归档 JSONL（改写只作用于发送视图，归档保真），原位置留每轮一行的
+ * 骨架摘要标记
+ * ③ LLM 摘要兜底：② 仍不达标时总结归档内容替换标记，失败则骨架标记本身就是降级文案
  *
  * <p>度量：上次调用的真实 promptTokens 与字符估算取大者；触发 70%，目标 40%。
  * 另有 forceCompact：provider 报上下文超限时跳过触发阈值直接压，作为最后保险。
@@ -78,14 +83,21 @@ public final class ContextCompactor {
             return rebuild(messages, blocks);
         }
 
-        // ① 旧轮的 tool_result 替换为占位（配对消息保留，块作为原子组不拆）
         List<List<Message>> recent = blocks.subList(blocks.size() - KEEP_RECENT_TURNS, blocks.size());
         List<List<Message>> old = new ArrayList<>(blocks.subList(0, blocks.size() - KEEP_RECENT_TURNS));
+        // 发送视图会被①改写；归档必须用未改写的原始消息，recall 才有完整内容可检索
+        List<List<Message>> pristine = new ArrayList<>();
         for (List<Message> block : old) {
+            pristine.add(List.copyOf(block));
+        }
+
+        // ① 旧轮的 tool_result 替换为一行摘要占位（配对消息保留，块作为原子组不拆）
+        for (List<Message> block : old) {
+            Map<String, String> toolNames = toolNamesIn(block);
             for (int i = 0; i < block.size(); i++) {
                 Message m = block.get(i);
                 if (m.role() == Role.TOOL) {
-                    block.set(i, Message.toolResult(m.toolCallId(), "(工具结果已省略)"));
+                    block.set(i, Message.toolResult(m.toolCallId(), placeholder(toolNames.get(m.toolCallId()), m.content())));
                 }
             }
         }
@@ -94,27 +106,97 @@ public final class ContextCompactor {
             return tokens;
         }
 
-        // ② 旧轮整体归档，原位置留标记
-        List<Message> oldFlat = flatten(old);
+        // ② 原始旧轮整体归档，原位置留骨架摘要标记
+        List<Message> oldFlat = flatten(pristine);
         sessions.appendArchive(session, oldFlat);
         List<Message> replacement = new ArrayList<>();
-        replacement.add(Message.user("[早前 " + oldFlat.size() + " 条消息已压缩归档，关键内容可用 recall 工具检索]"));
+        replacement.add(Message.user(skeletonDigest(pristine)));
         tokens = rebuild(messages, concat(List.of(replacement), recent));
         if (tokens <= target) {
             return tokens;
         }
 
-        // ③ LLM 摘要兜底：总结归档内容替换标记
+        // ③ LLM 摘要兜底：总结归档内容替换标记；失败时骨架标记即降级文案
         if (summarizer != null) {
             try {
                 String summary = summarizer.summarize(oldFlat);
                 replacement.set(0, Message.user("[历史摘要]\n" + summary));
                 tokens = rebuild(messages, concat(List.of(replacement), recent));
             } catch (Exception e) {
-                log.warn("摘要压缩失败，保留归档标记: {}", e.getMessage());
+                log.warn("摘要压缩失败，保留骨架标记: {}", e.getMessage());
             }
         }
         return tokens;
+    }
+
+    /** 收集块内 assistant.tool_calls 的 toolCallId → 工具名，供占位摘要引用。 */
+    private static Map<String, String> toolNamesIn(List<Message> block) {
+        Map<String, String> names = new HashMap<>();
+        for (Message m : block) {
+            if (m.toolCalls() != null) {
+                for (ToolCall tc : m.toolCalls()) {
+                    if (tc.id() != null && tc.function() != null) {
+                        names.put(tc.id(), tc.function().name());
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
+     * 占位摘要行：工具名 + 原始体量 + 首行。首行往往是关键信息（错误首行、exit code、
+     * "(no output)"），模型据此判断是否需要 recall 取回全文。
+     */
+    private static String placeholder(String toolName, String content) {
+        String name = toolName == null ? "工具" : toolName;
+        if (content == null || content.isEmpty()) {
+            return "(" + name + " 结果已省略：空输出)";
+        }
+        String firstLine = content.lines().findFirst().orElse("");
+        if (firstLine.length() > 120) {
+            firstLine = firstLine.substring(0, 120) + "…";
+        }
+        return "(" + name + " 结果已省略：原 " + content.lines().count() + " 行 / " + content.length()
+                + " 字符；首行: " + firstLine.replace('\n', ' ') + ")";
+    }
+
+    /**
+     * 归档标记：每轮一行"user 首句 → assistant 首句"骨架。是模型回忆旧对话的最低限度线索，
+     * 也是③摘要失败时的现成降级文案。
+     */
+    private static String skeletonDigest(List<List<Message>> blocks) {
+        StringBuilder sb = new StringBuilder("[早前 ").append(blocks.size()).append(" 轮对话已压缩归档，可用 recall 工具检索：");
+        for (List<Message> block : blocks) {
+            String user = firstText(block, Role.USER);
+            String assistant = firstText(block, Role.ASSISTANT);
+            if (user.isEmpty() && assistant.isEmpty()) {
+                continue;
+            }
+            sb.append("\n· ");
+            if (!user.isEmpty()) {
+                sb.append("用户: ").append(user);
+            }
+            if (!assistant.isEmpty()) {
+                sb.append(user.isEmpty() ? "助手: " : " → 助手: ").append(assistant);
+            }
+        }
+        return sb.append("]").toString();
+    }
+
+    /** 块内该角色第一条非空文本，截 80 字符；压缩器自己注入的标记行不作为线索重复出现。 */
+    private static String firstText(List<Message> block, Role role) {
+        for (Message m : block) {
+            if (m.role() != role || m.content() == null || m.content().isBlank()) {
+                continue;
+            }
+            String flat = m.content().replace('\n', ' ').trim();
+            if (flat.startsWith("[早前 ") || flat.startsWith("[历史摘要]")) {
+                continue;
+            }
+            return flat.length() > 80 ? flat.substring(0, 80) + "…" : flat;
+        }
+        return "";
     }
 
     /** 按 user 消息切轮；tool/assistant 消息归属其前的 user 消息所在块（配对天然不被切断）。 */
