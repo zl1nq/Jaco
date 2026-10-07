@@ -35,7 +35,7 @@ public final class PermissionHook implements AgentHook {
             Pattern.compile("\\b(shutdown|reboot|poweroff)\\b"),
             Pattern.compile(":\\(\\)\\s*\\{\\s*:\\|:&\\s*\\};:"));              // fork bomb
 
-    private static final Set<String> READ_ONLY = Set.of("read_file", "list_dir", "grep");
+    private static final Set<String> READ_ONLY = Set.of("read_file", "list_dir", "grep", "recall");
 
     private final Set<String> sessionAllowed = ConcurrentHashMap.newKeySet();
 

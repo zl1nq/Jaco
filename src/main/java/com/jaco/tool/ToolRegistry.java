@@ -22,9 +22,16 @@ public final class ToolRegistry {
     }
 
     public List<ToolDefinition> definitions() {
+        return definitions(null);
+    }
+
+    /** 工具子集（子 agent 用）；include 为 null 时返回全部。 */
+    public List<ToolDefinition> definitions(java.util.Set<String> include) {
         List<ToolDefinition> defs = new ArrayList<>();
         for (Tool tool : tools.values()) {
-            defs.add(ToolDefinition.of(tool.name(), tool.description(), tool.schema()));
+            if (include == null || include.contains(tool.name())) {
+                defs.add(ToolDefinition.of(tool.name(), tool.description(), tool.schema()));
+            }
         }
         return defs;
     }
