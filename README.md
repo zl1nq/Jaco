@@ -28,6 +28,7 @@ providers:
 ## 交互
 
 - 流式输出，等待首字节时有 spinner；agent 多轮工具循环由 `AgentRunner` 驱动，TUI 只消费事件
+- **Markdown 渲染**：按行状态机流式渲染（标题/列表/引用/链接/粗斜体/行内代码），代码块词法高亮（java/python/js/bash/json，其他语言原样）；truecolor 自动探测，降级 256 色
 - 内置工具：`read_file`（带行号、分页）、`write_file`、`list_dir`、`run_command`、`grep`
 - **权限闸门**：只读工具自动放行；写文件/执行命令需确认 `y=本次 / a=本会话放行 / n=拒绝`（拒绝原因回喂模型）；危险命令黑名单无条件拒绝
 - **沙箱**：文件工具限制在工作目录内，`workspace.extra_roots` 可加白名单
@@ -44,6 +45,7 @@ tui     JLine 3 REPL：消费 TurnEvent 渲染、确认交互、Ctrl+C、命令�
 agent   AgentRunner：驱动工具循环，吐 TurnEvent 事件流（Delta/ToolCall*/ApprovalRequest/Done）
 llm     手写 OpenAI 兼容 SSE 客户端：pull 模型流、tool_calls 增量累积、重试、取消
 tool    Tool 接口 + ToolRegistry（Schema/Handler 分离）+ 5 个内置工具 + PermissionHook + 路径沙箱
+render  MarkdownRenderer（按行状态机）+ CodeHighlighter（五语言词法）+ Theme 调色板
 hook    AgentHook 生命周期钩子（权限/审计/续轮等能力的挂载点）
 session 会话 JSON 落盘/恢复
 config  YAML 配置 + ${ENV} 占位符 + 命名 profile + shell/迭代上限/额外目录

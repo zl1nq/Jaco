@@ -4,6 +4,7 @@ import com.jaco.agent.AgentRunner;
 import com.jaco.agent.TurnEvent;
 import com.jaco.agent.TurnHandle;
 import com.jaco.llm.Usage;
+import com.jaco.render.MarkdownRenderer;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -28,6 +29,7 @@ public final class ConsoleApp {
     private static final String ANSI_YELLOW = "\033[33m";
     private static final String ANSI_CYAN = "\033[36m";
     private static final String ANSI_DIM = "\033[90m";
+    private static final String BOLD = "\033[1m";
     private static final String ANSI_RESET = "\033[0m";
 
     private final AgentRunner agent;
@@ -60,12 +62,11 @@ public final class ConsoleApp {
     }
 
     public void run() {
-        println(ANSI_CYAN + "jaco" + ANSI_RESET + ANSI_DIM
-                + " · 会话 " + agent.session().id() + " · /help 查看命令" + ANSI_RESET);
+        banner();
         while (true) {
             String line;
             try {
-                line = reader.readLine(ANSI_CYAN + "jaco » " + ANSI_RESET);
+                line = reader.readLine(ANSI_CYAN + "你 » " + ANSI_RESET);
             } catch (UserInterruptException e) {
                 continue;
             } catch (EndOfFileException e) {
@@ -84,6 +85,15 @@ public final class ConsoleApp {
             runTurn(line);
         }
         println(ANSI_DIM + "再见。" + ANSI_RESET);
+    }
+
+    /** 无右边框的欢迎横幅——避免中英文混排时的宽度对齐问题。 */
+    private void banner() {
+        println(ANSI_CYAN + BOLD + "jaco" + ANSI_RESET + ANSI_DIM + " ─────────────────────────────" + ANSI_RESET);
+        println(ANSI_DIM + "│ model  " + ANSI_RESET + agent.modelName());
+        println(ANSI_DIM + "│ 会话   " + ANSI_RESET + agent.session().id());
+        println(ANSI_DIM + "│ /help 命令 · Ctrl+C 中断本轮" + ANSI_RESET);
+        println(ANSI_DIM + "╰──────────────────────────────" + ANSI_RESET);
     }
 
     private boolean dispatch(String input) {
@@ -110,6 +120,8 @@ public final class ConsoleApp {
         long start = System.currentTimeMillis();
         TurnHandle handle = agent.runTurn(prompt);
         Spinner spinner = new Spinner(terminal);
+        MarkdownRenderer renderer = new MarkdownRenderer();
+        StringBuilder pending = new StringBuilder();
         var savedAttributes = terminal.getAttributes();
         terminal.enterRawMode();
 
@@ -120,6 +132,7 @@ public final class ConsoleApp {
         Throwable error = null;
         int iterations = 0;
         boolean sawOutput = false;
+        boolean replyLabeled = false;
 
         try {
             while (true) {
@@ -139,17 +152,34 @@ public final class ConsoleApp {
                         spinner.stop();
                         sawOutput = true;
                     }
-                    rawPrint(d.text());
+                    // jaco 标签贴在第一段正文前（模型先调工具时自动落到正文处）
+                    if (!replyLabeled) {
+                        rawPrint(ANSI_CYAN + BOLD + "jaco" + ANSI_RESET + ANSI_DIM + " » " + ANSI_RESET);
+                        replyLabeled = true;
+                    }
+                    // markdown 渲染只处理完整行；不完整的尾行留在缓冲区
+                    pending.append(d.text());
+                    int nl;
+                    while ((nl = pending.indexOf("\n")) >= 0) {
+                        String line = pending.substring(0, nl);
+                        pending.delete(0, nl + 1);
+                        rawPrint(renderer.renderLine(line) + "\n");
+                    }
                 } else if (event instanceof TurnEvent.ToolCallStart s) {
                     if (!sawOutput) {
                         spinner.stop();
                         sawOutput = true;
                     }
-                    ensureLineStart();
+                    flushPending(renderer, pending);
                     println(ANSI_YELLOW + "⏺ " + s.tool() + ANSI_RESET + ANSI_DIM + "(" + s.summary() + ")" + ANSI_RESET);
                 } else if (event instanceof TurnEvent.ToolCallEnd e) {
-                    String mark = e.ok() ? ANSI_DIM + "  ↳ " : ANSI_RED + "  ✗ ";
-                    println(mark + e.summary() + ANSI_RESET);
+                    // 结果预览挂一条竖轨，视觉上归属上方的 ⏺
+                    String[] lines = e.summary().split("\\n");
+                    String rail = e.ok() ? ANSI_DIM + "  ╰─ " : ANSI_RED + "  ✗ ";
+                    println(rail + (e.ok() ? ANSI_DIM : "") + lines[0] + ANSI_RESET);
+                    for (int i = 1; i < lines.length; i++) {
+                        println(ANSI_DIM + "  │ " + lines[i] + ANSI_RESET);
+                    }
                 } else if (event instanceof TurnEvent.ApprovalRequest a) {
                     // 退出 raw mode 才能用 LineReader 正常读入
                     terminal.writer().flush();
@@ -177,6 +207,7 @@ public final class ConsoleApp {
             if (!sawOutput) {
                 spinner.stop();
             }
+            flushPending(renderer, pending);
             terminal.writer().flush();
             terminal.setAttributes(savedAttributes);
         }
@@ -190,15 +221,18 @@ public final class ConsoleApp {
         } else if (error != null) {
             println(ANSI_RED + "✗ 出错: " + error.getMessage() + ANSI_RESET);
         }
-        println(ANSI_DIM + statusSuffix(usage, finishReason, iterations) + ANSI_RESET);
+        String mark = !aborted && !interrupted && error == null ? ANSI_GREEN + "✓" : ANSI_DIM + "·";
+        println(mark + ANSI_RESET + ANSI_DIM + statusSuffix(usage, finishReason, iterations) + ANSI_RESET);
     }
 
     private String askApproval(TurnEvent.ApprovalRequest request) {
-        println(ANSI_YELLOW + "? " + request.detail() + ANSI_RESET);
+        println(ANSI_YELLOW + "╭─ 需要确认 ─────────────────" + ANSI_RESET);
+        println(ANSI_YELLOW + "│ " + ANSI_RESET + request.detail());
+        println(ANSI_YELLOW + "╰─" + ANSI_RESET + ANSI_DIM + " y=本次 · a=本会话放行 · n=拒绝" + ANSI_RESET);
         while (true) {
             String line;
             try {
-                line = reader.readLine("允许? [y=本次 / a=本会话放行 / n=拒绝] ");
+                line = reader.readLine("允许? ");
             } catch (UserInterruptException e) {
                 return "n";
             } catch (EndOfFileException e) {
@@ -208,6 +242,15 @@ public final class ConsoleApp {
             if (line.equals("y") || line.equals("a") || line.equals("n")) {
                 return line;
             }
+        }
+    }
+
+    /** 把不完整的尾行按完整行渲染输出（Done/中断/工具开始前调用）。 */
+    private void flushPending(MarkdownRenderer renderer, StringBuilder pending) {
+        if (pending.length() > 0) {
+            String rest = pending.toString();
+            pending.setLength(0);
+            rawPrint(renderer.renderLine(rest) + "\n");
         }
     }
 

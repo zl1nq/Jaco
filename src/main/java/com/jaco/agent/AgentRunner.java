@@ -81,6 +81,10 @@ public final class AgentRunner {
         return session;
     }
 
+    public String modelName() {
+        return provider.model();
+    }
+
     public void newSession() {
         session = sessions.createNew();
     }
