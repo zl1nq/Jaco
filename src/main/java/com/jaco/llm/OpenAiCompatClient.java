@@ -113,6 +113,20 @@ public final class OpenAiCompatClient {
                     if (finish != null && finish.isTextual()) {
                         finishReason = finish.textValue();
                     }
+                    JsonNode toolCalls = first.path("delta").get("tool_calls");
+                    if (toolCalls != null && toolCalls.isArray()) {
+                        for (JsonNode tc : toolCalls) {
+                            JsonNode fn = tc.path("function");
+                            JsonNode idNode = tc.get("id");
+                            JsonNode nameNode = fn.get("name");
+                            JsonNode argsNode = fn.get("arguments");
+                            stream.queue().put(new StreamChunk.ToolCallDelta(
+                                    tc.path("index").asInt(0),
+                                    idNode != null && idNode.isTextual() ? idNode.textValue() : null,
+                                    nameNode != null && nameNode.isTextual() ? nameNode.textValue() : null,
+                                    argsNode != null && argsNode.isTextual() ? argsNode.textValue() : null));
+                        }
+                    }
                 }
                 JsonNode usageNode = node.get("usage");
                 if (usageNode != null && usageNode.isObject()) {

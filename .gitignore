@@ -38,3 +38,6 @@ build/
 .DS_Store
 ### Maven Shade ###
 dependency-reduced-pom.xml
+
+### logback 在 jaco.home 未设置时的落点 ###
+jaco.home_IS_UNDEFINED/

@@ -1,10 +1,8 @@
 package com.jaco.tui;
 
 import com.jaco.agent.AgentRunner;
-import com.jaco.agent.TurnAbortedException;
-import com.jaco.llm.ChatStream;
-import com.jaco.llm.JacoApiException;
-import com.jaco.llm.StreamChunk;
+import com.jaco.agent.TurnEvent;
+import com.jaco.agent.TurnHandle;
 import com.jaco.llm.Usage;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
@@ -14,12 +12,13 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 流式 REPL：底部输入、流式滚动输出。
- * 流式期间处于 raw mode，直接往终端写 token；Ctrl+C 中断本次生成，
+ * 流式 REPL：底部输入、流式滚动输出。消费 AgentRunner 的 TurnEvent。
+ * 流式期间处于 raw mode；Ctrl+C 中断本轮（取消流 / 杀命令子进程 / 拒绝待确认操作），
  * 已收到的部分内容保留进会话。
  */
 public final class ConsoleApp {
@@ -41,7 +40,7 @@ public final class ConsoleApp {
         this.terminal = TerminalBuilder.builder().system(true).build();
         this.reader = LineReaderBuilder.builder()
                 .terminal(terminal)
-                .variable(LineReader.HISTORY_FILE, java.nio.file.Path.of(
+                .variable(LineReader.HISTORY_FILE, Path.of(
                         System.getProperty("jaco.home"), "history"))
                 .build();
         registerCommands();
@@ -52,7 +51,7 @@ public final class ConsoleApp {
             printHelp();
             return true;
         }));
-        commands.put("new", new Command.Simple("new", "开新会话", args -> {
+        commands.put("new", new Command.Simple("new", "开新会话（清空上下文与权限放行记录）", args -> {
             agent.newSession();
             println(ANSI_DIM + "已开始新会话 " + agent.session().id() + ANSI_RESET);
             return true;
@@ -68,7 +67,6 @@ public final class ConsoleApp {
             try {
                 line = reader.readLine(ANSI_CYAN + "jaco » " + ANSI_RESET);
             } catch (UserInterruptException e) {
-                // 输入中的 Ctrl+C：清空当前行，重新开始
                 continue;
             } catch (EndOfFileException e) {
                 break;
@@ -103,113 +101,153 @@ public final class ConsoleApp {
         for (Command c : commands.values()) {
             println("  /" + c.name() + ANSI_DIM + "  " + c.description() + ANSI_RESET);
         }
-        println(ANSI_DIM + "  Ctrl+C  中断正在生成的回复（已生成部分保留）" + ANSI_RESET);
+        println(ANSI_DIM + "  Ctrl+C  中断本轮（取消流/杀命令/拒绝确认，已生成部分保留）" + ANSI_RESET);
     }
 
-    // ---- 一轮对话的生命周期 ----
+    // ---- 一轮对话：消费 agent loop 的事件流 ----
 
     private void runTurn(String prompt) {
-        ChatStream stream;
-        try {
-            stream = agent.beginTurn(prompt);
-        } catch (TurnAbortedException e) {
-            println(ANSI_YELLOW + "（本轮已被 hook 拦截）" + ANSI_RESET);
-            return;
-        } catch (JacoApiException e) {
-            println(ANSI_RED + "✗ " + e.getMessage() + ANSI_RESET);
-            return;
-        } catch (RuntimeException e) {
-            println(ANSI_RED + "✗ 请求失败: " + e.getMessage() + ANSI_RESET);
-            return;
-        }
-
         long start = System.currentTimeMillis();
-        StringBuilder content = new StringBuilder();
-        Usage usage = null;
-        String finishReason = null;
-        Throwable error = null;
-        boolean interrupted = false;
-
+        TurnHandle handle = agent.runTurn(prompt);
         Spinner spinner = new Spinner(terminal);
         var savedAttributes = terminal.getAttributes();
         terminal.enterRawMode();
+
+        Usage usage = null;
+        String finishReason = null;
+        boolean interrupted = false;
+        boolean aborted = false;
+        Throwable error = null;
+        int iterations = 0;
+        boolean sawOutput = false;
+
         try {
             while (true) {
-                StreamChunk chunk = stream.poll(60);
-                if (chunk == null) {
+                TurnEvent event = handle.poll(60);
+                if (event == null) {
                     int key = terminal.reader().read(1L);
                     if (key == 3) { // Ctrl+C
-                        interrupted = true;
-                        stream.cancel();
-                        break;
+                        handle.cancel();
                     }
-                    if (content.isEmpty()) {
+                    if (!sawOutput) {
                         spinner.tick();
                     }
                     continue;
                 }
-                if (chunk instanceof StreamChunk.Delta d) {
-                    if (content.isEmpty()) {
+                if (event instanceof TurnEvent.Delta d) {
+                    if (!sawOutput) {
                         spinner.stop();
+                        sawOutput = true;
                     }
-                    content.append(d.text());
                     rawPrint(d.text());
-                } else if (chunk instanceof StreamChunk.Done d) {
-                    finishReason = d.finishReason();
+                } else if (event instanceof TurnEvent.ToolCallStart s) {
+                    if (!sawOutput) {
+                        spinner.stop();
+                        sawOutput = true;
+                    }
+                    ensureLineStart();
+                    println(ANSI_YELLOW + "⏺ " + s.tool() + ANSI_RESET + ANSI_DIM + "(" + s.summary() + ")" + ANSI_RESET);
+                } else if (event instanceof TurnEvent.ToolCallEnd e) {
+                    String mark = e.ok() ? ANSI_DIM + "  ↳ " : ANSI_RED + "  ✗ ";
+                    println(mark + e.summary() + ANSI_RESET);
+                } else if (event instanceof TurnEvent.ApprovalRequest a) {
+                    // 退出 raw mode 才能用 LineReader 正常读入
+                    terminal.writer().flush();
+                    terminal.setAttributes(savedAttributes);
+                    String answer = askApproval(a);
+                    a.resolver().accept(answer);
+                    terminal.enterRawMode();
+                } else if (event instanceof TurnEvent.Done d) {
                     usage = d.usage();
-                    break;
-                } else if (chunk instanceof StreamChunk.Error e) {
-                    error = e.cause() != null ? e.cause() : new RuntimeException(e.message());
+                    finishReason = d.finishReason();
+                    interrupted = d.interrupted();
+                    aborted = d.abortedByHook();
+                    error = d.error();
+                    iterations = d.iterations();
                     break;
                 }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            handle.cancel();
             interrupted = true;
-            stream.cancel();
         } catch (IOException e) {
             error = e;
         } finally {
-            // 内容已开始输出时 spinner 早已停止，再清行会把刚打印的回复擦掉
-            if (content.isEmpty()) {
+            if (!sawOutput) {
                 spinner.stop();
             }
             terminal.writer().flush();
             terminal.setAttributes(savedAttributes);
         }
+        ensureLineStart();
 
-        if (content.length() > 0) {
-            terminal.writer().println();
-        }
-        agent.endTurn(content.toString(), finishReason, usage, interrupted, error);
-
-        if (interrupted) {
+        turnMillis = System.currentTimeMillis() - start;
+        if (aborted) {
+            println(ANSI_YELLOW + "（本轮已被 hook 拦截）" + ANSI_RESET);
+        } else if (interrupted) {
             println(ANSI_YELLOW + "⏹ 已中断，以上部分内容已保留" + ANSI_RESET);
         } else if (error != null) {
-            println(ANSI_RED + "✗ 生成中断: " + error.getMessage() + ANSI_RESET);
+            println(ANSI_RED + "✗ 出错: " + error.getMessage() + ANSI_RESET);
         }
-        println(ANSI_DIM + statusSuffix(usage, start, finishReason) + ANSI_RESET);
+        println(ANSI_DIM + statusSuffix(usage, finishReason, iterations) + ANSI_RESET);
+    }
+
+    private String askApproval(TurnEvent.ApprovalRequest request) {
+        println(ANSI_YELLOW + "? " + request.detail() + ANSI_RESET);
+        while (true) {
+            String line;
+            try {
+                line = reader.readLine("允许? [y=本次 / a=本会话放行 / n=拒绝] ");
+            } catch (UserInterruptException e) {
+                return "n";
+            } catch (EndOfFileException e) {
+                return "n";
+            }
+            line = line.strip().toLowerCase();
+            if (line.equals("y") || line.equals("a") || line.equals("n")) {
+                return line;
+            }
+        }
     }
 
     /** raw mode 下 \n 不会回车，统一补 \r。 */
     private void rawPrint(String text) {
         terminal.writer().print(text.replace("\n", "\r\n"));
         terminal.writer().flush();
+        atLineStart = text.endsWith("\n");
     }
 
-    private String statusSuffix(Usage usage, long startMillis, String finishReason) {
+    private boolean atLineStart = true;
+
+    private void ensureLineStart() {
+        if (!atLineStart) {
+            terminal.writer().print("\r\n");
+            terminal.writer().flush();
+            atLineStart = true;
+        }
+    }
+
+    private String statusSuffix(Usage usage, String finishReason, int iterations) {
         StringBuilder sb = new StringBuilder("↳ ");
         if (usage != null) {
             sb.append(usage.promptTokens()).append(" + ").append(usage.completionTokens()).append(" tokens · ");
         }
-        sb.append(String.format("%.1fs", (System.currentTimeMillis() - startMillis) / 1000.0));
+        if (iterations > 1) {
+            sb.append(iterations).append(" 轮 · ");
+        }
+        long millis = turnMillis;
+        sb.append(String.format("%.1fs", millis / 1000.0));
         if (finishReason != null && !finishReason.equals("stop")) {
             sb.append(" · ").append(finishReason);
         }
         return sb.toString();
     }
 
+    private long turnMillis;
+
     private void println(String text) {
+        atLineStart = true;
         terminal.writer().println(text);
         terminal.writer().flush();
     }

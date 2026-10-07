@@ -11,7 +11,8 @@ public record ChatRequest(
         List<Message> messages,
         Double temperature,
         boolean stream,
-        @JsonProperty("stream_options") StreamOptions streamOptions) {
+        @JsonProperty("stream_options") StreamOptions streamOptions,
+        List<ToolDefinition> tools) {
 
     public record StreamOptions(@JsonProperty("include_usage") boolean includeUsage) {
     }

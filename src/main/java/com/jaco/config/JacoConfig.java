@@ -11,6 +11,9 @@ public record JacoConfig(
         String active,
         @JsonProperty("system_prompt") String systemPrompt,
         @JsonProperty("log_level") String logLevel,
+        String shell,
+        @JsonProperty("max_iterations") Integer maxIterations,
+        WorkspaceConfig workspace,
         Map<String, ProviderConfig> providers) {
 
     /** 解析出当前生效的 provider；active 未指定且只有一个 profile 时自动选择。 */
@@ -22,5 +25,14 @@ public record JacoConfig(
             return providers.size() == 1 ? providers.values().iterator().next() : null;
         }
         return providers.get(active);
+    }
+
+    public int effectiveMaxIterations() {
+        return maxIterations == null || maxIterations < 1 ? 25 : maxIterations;
+    }
+
+    /** shell 取值：auto / bash / cmd / powershell，默认 auto。 */
+    public String effectiveShell() {
+        return shell == null || shell.isBlank() ? "auto" : shell;
     }
 }

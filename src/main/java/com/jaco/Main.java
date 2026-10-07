@@ -7,6 +7,14 @@ import com.jaco.config.ProviderConfig;
 import com.jaco.hook.HookChain;
 import com.jaco.llm.OpenAiCompatClient;
 import com.jaco.session.SessionStore;
+import com.jaco.tool.PermissionHook;
+import com.jaco.tool.ToolRegistry;
+import com.jaco.tool.ToolSandbox;
+import com.jaco.tool.builtin.GrepTool;
+import com.jaco.tool.builtin.ListDirTool;
+import com.jaco.tool.builtin.ReadFileTool;
+import com.jaco.tool.builtin.RunCommandTool;
+import com.jaco.tool.builtin.WriteFileTool;
 import com.jaco.tui.ConsoleApp;
 
 import java.io.IOException;
@@ -45,10 +53,33 @@ public final class Main {
             return;
         }
 
+        Path workspaceRoot = Path.of("").toAbsolutePath();
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(new ReadFileTool());
+        registry.register(new WriteFileTool());
+        registry.register(new ListDirTool());
+        registry.register(new RunCommandTool());
+        registry.register(new GrepTool());
+
+        List<String> extraRoots = config.workspace() == null || config.workspace().extraRoots() == null
+                ? List.of()
+                : config.workspace().extraRoots();
+        ToolSandbox sandbox = new ToolSandbox(workspaceRoot, extraRoots);
+
+        PermissionHook permissionHook = new PermissionHook();
         OpenAiCompatClient client = new OpenAiCompatClient(provider.chatCompletionsUrl(), provider.apiKey());
         SessionStore sessions = new SessionStore(home.resolve("sessions"));
         AgentRunner agent = new AgentRunner(
-                client, provider, config.systemPrompt(), sessions, new HookChain(List.of()));
+                client,
+                provider,
+                config.systemPrompt(),
+                sessions,
+                new HookChain(List.of(permissionHook)),
+                registry,
+                sandbox,
+                workspaceRoot,
+                config.effectiveShell(),
+                config.effectiveMaxIterations());
         agent.start();
 
         new ConsoleApp(agent).run();
@@ -69,6 +100,10 @@ public final class Main {
                 active: deepseek
                 # system_prompt: 自定义系统提示词（可选）
                 # log_level: DEBUG（可选，默认 INFO）
+                # shell: auto            # auto / bash / cmd / powershell
+                # max_iterations: 25     # 单轮最大 LLM 调用次数
+                # workspace:
+                #   extra_roots: [D:/other-project]   # 文件工具的额外允许目录
                 providers:
                   deepseek:
                     base_url: https://api.deepseek.com

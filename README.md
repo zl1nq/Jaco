@@ -1,6 +1,6 @@
 # jaco
 
-一个用 Java 21 从零手写的终端流式对话 agent（类 Claude Code 的 harness，v0.1 为纯聊天）。
+一个用 Java 21 从零手写的终端 agent（类 Claude Code 的 harness），带工具调用与权限确认。
 
 ## 运行
 
@@ -27,25 +27,30 @@ providers:
 
 ## 交互
 
-- 流式输出，等待首字节时有 spinner，每轮结束显示 token 用量与耗时
-- **Ctrl+C** 中断正在生成的回复，已生成部分保留进会话
+- 流式输出，等待首字节时有 spinner；agent 多轮工具循环由 `AgentRunner` 驱动，TUI 只消费事件
+- 内置工具：`read_file`（带行号、分页）、`write_file`、`list_dir`、`run_command`、`grep`
+- **权限闸门**：只读工具自动放行；写文件/执行命令需确认 `y=本次 / a=本会话放行 / n=拒绝`（拒绝原因回喂模型）；危险命令黑名单无条件拒绝
+- **沙箱**：文件工具限制在工作目录内，`workspace.extra_roots` 可加白名单
+- `run_command`：shell 可配置（`shell: auto/bash/cmd/powershell`），超时 120s，输出保留末尾 50k
+- **Ctrl+C** 中断本轮：取消流、杀命令子进程、拒绝待确认操作，已生成部分保留进会话
 - `/help` `/new` `/exit`；会话自动落盘到 `~/.jaco/sessions/`，启动自动恢复最近一次
+- 单轮最大 LLM 迭代次数 `max_iterations`（默认 25）防失控
 - 日志只写 `~/.jaco/logs/`（stdout 属于 TUI）
 
 ## 架构（分包即边界，llm/agent 不得依赖 tui）
 
 ```
-tui     JLine 3 REPL：流式渲染、spinner、Ctrl+C、命令注册表
-agent   AgentRunner：一轮的生命周期（hook → 请求 → 流消费 → 归档）
-llm     手写 OpenAI 兼容 SSE 客户端：pull 模型流、重试、取消；全量消息模型
-hook    AgentHook 生命周期钩子（权限/审计等未来能力的挂载点）
+tui     JLine 3 REPL：消费 TurnEvent 渲染、确认交互、Ctrl+C、命令注册表
+agent   AgentRunner：驱动工具循环，吐 TurnEvent 事件流（Delta/ToolCall*/ApprovalRequest/Done）
+llm     手写 OpenAI 兼容 SSE 客户端：pull 模型流、tool_calls 增量累积、重试、取消
+tool    Tool 接口 + ToolRegistry（Schema/Handler 分离）+ 5 个内置工具 + PermissionHook + 路径沙箱
+hook    AgentHook 生命周期钩子（权限/审计/续轮等能力的挂载点）
 session 会话 JSON 落盘/恢复
-config  YAML 配置 + ${ENV} 占位符 + 命名 profile
+config  YAML 配置 + ${ENV} 占位符 + 命名 profile + shell/迭代上限/额外目录
 ```
 
-## 预留的扩展点（M1 工具调用接入时使用）
+## 预留的扩展点（M2+ 使用）
 
-- `Message` 已含 `tool_calls` / `tool_call_id`（OpenAI 形状），协议模型无需重构
-- `ChatStream` 的事件流天然支持在 `finish_reason == "tool_calls"` 时截获执行工具
-- `AgentHook`：`onBeforeToolCall`（可否决，拒绝原因回喂模型）/ `onAfterToolCall` / `onStop` 签名已定
-- 重试/错误策略已实现：连接错误与 429/5xx 指数退避重试，4xx 直接报错，流中断保留部分内容
+- 新增工具 = 实现 `Tool` 接口 + `registry.register()`，循环零改动
+- `AgentHook.onStop` 已接线：返回 true 可强制续轮（"目标闸门"的挂载点）
+- 上下文压缩、子 agent（`task` 工具模式）、系统提示词动态分节均已留好入口

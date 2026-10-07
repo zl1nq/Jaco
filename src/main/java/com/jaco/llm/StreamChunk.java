@@ -15,4 +15,11 @@ public sealed interface StreamChunk {
 
     record Error(Throwable cause, String message) implements StreamChunk {
     }
+
+    /**
+     * tool_calls 的增量片段：id/name 只在首个片段出现，arguments 跨 chunk 拼接，
+     * 由消费方（agent loop）按 index 累积成完整的 ToolCall。
+     */
+    record ToolCallDelta(int index, String id, String name, String argumentsFragment) implements StreamChunk {
+    }
 }
