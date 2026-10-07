@@ -13,6 +13,7 @@ import com.jaco.tool.ToolSandbox;
 import com.jaco.tool.builtin.GrepTool;
 import com.jaco.tool.builtin.ListDirTool;
 import com.jaco.tool.builtin.ReadFileTool;
+import com.jaco.tool.builtin.RecallTool;
 import com.jaco.tool.builtin.RunCommandTool;
 import com.jaco.tool.builtin.WriteFileTool;
 import com.jaco.tui.ConsoleApp;
@@ -60,6 +61,7 @@ public final class Main {
         registry.register(new ListDirTool());
         registry.register(new RunCommandTool());
         registry.register(new GrepTool());
+        registry.register(new RecallTool());
 
         List<String> extraRoots = config.workspace() == null || config.workspace().extraRoots() == null
                 ? List.of()

@@ -254,7 +254,7 @@ public final class AgentRunner {
     /** 串行执行工具；每个 tool_call 都必须产生 tool result（协议要求成对）。 */
     private void executeTools(List<ToolCall> calls, TurnHandle handle) {
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
-                handle.processRef(), handle::isCancelled);
+                handle.processRef(), handle::isCancelled, sessions.archivePath(session));
         for (ToolCall call : calls) {
             String name = call.function().name() != null ? call.function().name() : "?";
             String summary = registry.summaryOf(call);

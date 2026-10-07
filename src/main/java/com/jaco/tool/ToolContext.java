@@ -10,5 +10,6 @@ public record ToolContext(
         ToolSandbox sandbox,
         String shellChoice,
         AtomicReference<Process> currentProcess,
-        java.util.function.BooleanSupplier cancelled) {
+        java.util.function.BooleanSupplier cancelled,
+        Path archiveFile) {
 }

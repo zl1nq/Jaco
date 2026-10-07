@@ -73,7 +73,8 @@ public final class ContextCompactor {
                     sessions.appendArchivedOutput(session, m.content());
                     block.set(i, Message.toolResult(m.toolCallId(),
                             "(工具输出过大已存档，前 " + PREVIEW_CHARS + " 字符如下)\n"
-                                    + m.content().substring(0, PREVIEW_CHARS) + "\n(完整内容见归档文件)"));
+                                    + m.content().substring(0, PREVIEW_CHARS)
+                                    + "\n(其余内容已存档，可用 recall 工具按关键词取回)"));
                 }
             }
         }
@@ -106,7 +107,7 @@ public final class ContextCompactor {
         List<Message> oldFlat = flatten(old);
         sessions.appendArchive(session, oldFlat);
         List<Message> replacement = new ArrayList<>();
-        replacement.add(Message.user("[早前 " + oldFlat.size() + " 条消息已归档于 " + sessions.archivePath(session) + "]"));
+        replacement.add(Message.user("[早前 " + oldFlat.size() + " 条消息已压缩归档，关键内容可用 recall 工具检索]"));
         tokens = rebuild(messages, concat(List.of(replacement), recent));
         if (tokens <= target) {
             return tokens;
