@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -94,6 +95,44 @@ public final class AgentRunner {
 
     public void newSession() {
         session = sessions.createNew();
+        lastPromptTokens = 0;
+    }
+
+    /**
+     * 切换到指定会话（只在两轮之间调用）。idOrPrefix 支持唯一前缀匹配；
+     * 失败时返回错误说明、当前会话保持不变。
+     */
+    public String switchSession(String idOrPrefix) {
+        if (idOrPrefix.matches("[A-Za-z0-9._-]+")) {
+            Optional<Session> exact = sessions.load(idOrPrefix);
+            if (exact.isPresent()) {
+                return adopt(exact.get());
+            }
+        }
+        List<Session> matched = sessions.listSessions().stream()
+                .filter(s -> s.id().startsWith(idOrPrefix))
+                .toList();
+        if (matched.isEmpty()) {
+            return "没有匹配的会话: " + idOrPrefix;
+        }
+        if (matched.size() > 1) {
+            return "前缀不唯一（匹配 " + matched.size() + " 个），请加长: " + idOrPrefix;
+        }
+        return adopt(matched.get(0));
+    }
+
+    private String adopt(Session target) {
+        if (target.id().equals(session.id())) {
+            return "已是当前会话";
+        }
+        session = target;
+        lastPromptTokens = 0;
+        return null;
+    }
+
+    /** 全部会话（新→旧），供 /sessions 展示。 */
+    public List<Session> listSessions() {
+        return sessions.listSessions();
     }
 
     /** 启动一轮：loop 在后台线程运行，返回的事件句柄由调用方消费。 */

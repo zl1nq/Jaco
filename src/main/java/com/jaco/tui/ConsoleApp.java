@@ -61,7 +61,51 @@ public final class ConsoleApp {
             println(ANSI_DIM + "已开始新会话 " + agent.session().id() + ANSI_RESET);
             return true;
         }));
+        commands.put("sessions", new Command.Simple("sessions", "列出会话（新→旧，* 为当前）", args -> {
+            printSessions();
+            return true;
+        }));
+        commands.put("switch", new Command.Simple("switch", "切换会话：/switch <会话id>（支持唯一前缀）", args -> {
+            String id = args.strip();
+            if (id.isEmpty()) {
+                println(ANSI_YELLOW + "用法: /switch <会话id>，/sessions 查看" + ANSI_RESET);
+                return true;
+            }
+            String error = agent.switchSession(id);
+            if (error != null) {
+                println(ANSI_YELLOW + error + ANSI_RESET);
+            } else {
+                println(ANSI_DIM + "已切换到会话 " + agent.session().id()
+                        + "（" + agent.session().messages().size() + " 条消息）" + ANSI_RESET);
+            }
+            return true;
+        }));
         commands.put("exit", new Command.Simple("exit", "退出（Ctrl+D 同效）", args -> false));
+    }
+
+    private void printSessions() {
+        List<com.jaco.session.Session> sessions = agent.listSessions();
+        if (sessions.isEmpty()) {
+            println(ANSI_DIM + "（暂无历史会话）" + ANSI_RESET);
+            return;
+        }
+        String currentId = agent.session().id();
+        for (com.jaco.session.Session s : sessions) {
+            String marker = s.id().equals(currentId) ? ANSI_GREEN + "*" + ANSI_RESET : " ";
+            println(marker + " " + s.id() + ANSI_DIM + "  " + s.messages().size() + " 条消息  "
+                    + firstUserPrompt(s) + ANSI_RESET);
+        }
+    }
+
+    /** 首条用户消息做预览；压缩器注入的标记行跳过。 */
+    private static String firstUserPrompt(com.jaco.session.Session s) {
+        return s.messages().stream()
+                .filter(m -> m.role() == com.jaco.llm.Role.USER)
+                .map(m -> m.content() == null ? "" : m.content().replace('\n', ' ').strip())
+                .filter(t -> !t.isEmpty() && !t.startsWith("[早前 ") && !t.startsWith("[历史摘要]"))
+                .findFirst()
+                .map(t -> t.length() > 40 ? t.substring(0, 40) + "…" : t)
+                .orElse("");
     }
 
     public void run() {

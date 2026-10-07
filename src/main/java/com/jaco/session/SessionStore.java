@@ -14,6 +14,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,37 @@ public final class SessionStore {
             }
         }
         return createNew();
+    }
+
+    /** 全部会话，新→旧排序；损坏的文件跳过。 */
+    public List<Session> listSessions() {
+        List<Session> sessions = new ArrayList<>();
+        for (Path p : listSessionFiles()) {
+            try {
+                sessions.add(mapper.readValue(p.toFile(), Session.class));
+            } catch (IOException e) {
+                log.warn("跳过损坏的会话文件 {}: {}", p.getFileName(), e.getMessage());
+            }
+        }
+        sessions.sort(Comparator.comparingLong(Session::createdAt).reversed());
+        return sessions;
+    }
+
+    /** 按 id 加载单个会话；id 含路径字符或文件不存在/损坏时返回 empty。 */
+    public Optional<Session> load(String id) {
+        if (!id.matches("[A-Za-z0-9._-]+")) {
+            return Optional.empty();
+        }
+        Path file = dir.resolve(id + ".json");
+        if (!Files.exists(file)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(mapper.readValue(file.toFile(), Session.class));
+        } catch (IOException e) {
+            log.warn("会话文件损坏 {}: {}", file.getFileName(), e.getMessage());
+            return Optional.empty();
+        }
     }
 
     public void save(Session session) {
