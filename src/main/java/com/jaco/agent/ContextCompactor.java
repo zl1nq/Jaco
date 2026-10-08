@@ -18,8 +18,8 @@ import java.util.function.Consumer;
  * 回填闸门在入口处截断落盘（不进入压缩周期），这里只管整轮级别的瘦身：
  *
  * <p>① 旧轮（最近 2 轮之外）的 tool_result 替换为一行摘要占位（工具名 + 体量 + 首行）——
- * tool_calls/tool_result 配对原子保留
- * ② 中段整轮按原始内容归档 JSONL（改写只作用于发送视图，归档保真），原位置留每轮一行的
+ * tool_calls/tool_result 配对原子保留；被替换的原文先归档，成功后才修改会话
+ * ② 中段整轮归档 JSONL（已归档的工具原文不重复写入），原位置留每轮一行的
  * 骨架摘要标记
  * ③ LLM 摘要兜底：② 仍不达标时总结归档内容替换标记，失败则骨架标记本身就是降级文案
  *
@@ -62,7 +62,7 @@ public final class ContextCompactor {
         notices.accept("⟲ 上下文接近上限（约 " + before + " tokens），正在压缩…");
         long after = compact(messages, target, summarizer);
         log.info("上下文压缩: {} -> {} tokens (limit={})", before, after, contextLimit);
-        notices.accept("⟲ 已压缩: " + before + " → " + after + " tokens（全量历史归档于 " + sessions.archivePath(session).getFileName() + "）");
+        notices.accept("⟲ 已压缩: " + before + " → " + after + " tokens（归档文件: " + sessions.archivePath(session).getFileName() + "）");
         return new Outcome(true, before, after);
     }
 
@@ -85,30 +85,44 @@ public final class ContextCompactor {
 
         List<List<Message>> recent = blocks.subList(blocks.size() - KEEP_RECENT_TURNS, blocks.size());
         List<List<Message>> old = new ArrayList<>(blocks.subList(0, blocks.size() - KEEP_RECENT_TURNS));
-        // 发送视图会被①改写；归档必须用未改写的原始消息，recall 才有完整内容可检索
+        // 先在临时块中压缩，归档成功前不修改会话。
         List<List<Message>> pristine = new ArrayList<>();
         for (List<Message> block : old) {
             pristine.add(List.copyOf(block));
         }
 
         // ① 旧轮的 tool_result 替换为一行摘要占位（配对消息保留，块作为原子组不拆）
+        List<Message> replacedResults = new ArrayList<>();
         for (List<Message> block : old) {
             Map<String, String> toolNames = toolNamesIn(block);
             for (int i = 0; i < block.size(); i++) {
                 Message m = block.get(i);
-                if (m.role() == Role.TOOL) {
+                if (m.role() == Role.TOOL && !session.compactedToolCallIds().contains(m.toolCallId())) {
+                    replacedResults.add(m);
                     block.set(i, Message.toolResult(m.toolCallId(), placeholder(toolNames.get(m.toolCallId()), m.content())));
                 }
             }
         }
-        long tokens = rebuild(messages, concat(old, recent));
+        long tokens = estimateTokens(flatten(concat(old, recent)));
         if (tokens <= target) {
-            return tokens;
+            sessions.appendArchive(session, replacedResults);
+            for (Message m : replacedResults) {
+                session.compactedToolCallIds().add(m.toolCallId());
+            }
+            return rebuild(messages, concat(old, recent));
         }
 
         // ② 原始旧轮整体归档，原位置留骨架摘要标记
         List<Message> oldFlat = flatten(pristine);
-        sessions.appendArchive(session, oldFlat);
+        sessions.appendArchive(session, oldFlat.stream()
+                .filter(m -> m.role() != Role.TOOL
+                        || !session.compactedToolCallIds().contains(m.toolCallId()))
+                .toList());
+        for (Message m : oldFlat) {
+            if (m.role() == Role.TOOL) {
+                session.compactedToolCallIds().remove(m.toolCallId());
+            }
+        }
         List<Message> replacement = new ArrayList<>();
         replacement.add(Message.user(skeletonDigest(pristine)));
         tokens = rebuild(messages, concat(List.of(replacement), recent));
