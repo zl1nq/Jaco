@@ -15,6 +15,12 @@ public final class HookChain {
         this.hooks = List.copyOf(hooks);
     }
 
+    public void onSessionChanged() {
+        for (AgentHook hook : hooks) {
+            hook.onSessionChanged();
+        }
+    }
+
     /** 依次改写 prompt；任一 hook 返回 null 即拦截。 */
     public String onUserPromptSubmit(String prompt) {
         for (AgentHook hook : hooks) {

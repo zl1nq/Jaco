@@ -14,6 +14,10 @@ import com.jaco.llm.ToolCall;
  */
 public interface AgentHook {
 
+    /** 新会话创建成功或成功切换到其他会话后调用，用于清理会话级状态。 */
+    default void onSessionChanged() {
+    }
+
     /** 用户输入提交后、进入本轮处理前调用。返回改写后的 prompt；返回 null 表示拦截，本轮直接终止。 */
     default String onUserPromptSubmit(String prompt) {
         return prompt;

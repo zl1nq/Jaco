@@ -111,6 +111,7 @@ public final class AgentRunner {
     public void newSession() {
         session = sessions.createNew();
         lastPromptTokens = 0;
+        hooks.onSessionChanged();
     }
 
     /**
@@ -142,6 +143,7 @@ public final class AgentRunner {
         }
         session = target;
         lastPromptTokens = 0;
+        hooks.onSessionChanged();
         return null;
     }
 

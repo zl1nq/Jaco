@@ -110,7 +110,12 @@ public final class PermissionHook implements AgentHook {
         }
     }
 
-    /** 会话结束（/new）时清空放行记录。 */
+    @Override
+    public void onSessionChanged() {
+        resetSession();
+    }
+
+    /** 新建或切换会话时清空放行记录。 */
     public void resetSession() {
         sessionAllowed.clear();
     }

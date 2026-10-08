@@ -10,11 +10,15 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ContextCompactorTest {
 
@@ -71,8 +75,27 @@ class ContextCompactorTest {
         assertTrue(joined.contains("1600 字符；首行: FIRST_LINE_MARKER"));
         // 最近轮不受①影响
         assertTrue(joined.contains("RECENT_KEEP"));
-        // ① 已达标，未走到归档
-        assertFalse(Files.exists(new SessionStore(tmp).archivePath(session)));
+        // ① 已达标，被替换的原文仍必须归档；最近轮不归档。
+        SessionStore store = new SessionStore(tmp);
+        String archived = Files.readString(store.archivePath(session));
+        assertEquals(2, archived.lines().count());
+        assertTrue(archived.contains("r".repeat(1582)));
+        assertFalse(archived.contains("RECENT_KEEP"));
+        assertEquals(java.util.Set.of("call-1", "call-2"), session.compactedToolCallIds());
+
+        // 保存并恢复后，显式状态仍生效，重复压缩不再次归档或改写占位。
+        store.save(session);
+        Session loaded = store.load(session.id()).orElseThrow();
+        compactor(loaded, 1000).forceCompact(loaded.messages(), n -> { }, null);
+        assertEquals(joined, render(loaded.messages()));
+        assertEquals(archived, Files.readString(store.archivePath(loaded)));
+
+        // 后续进入②时，不再次归档已保存的工具结果或占位。
+        compactor(loaded, 400).forceCompact(loaded.messages(), n -> { }, null);
+        String laterArchive = Files.readString(store.archivePath(loaded));
+        assertEquals(2, laterArchive.lines().filter(line -> line.contains("FIRST_LINE_MARKER")).count());
+        assertFalse(laterArchive.contains("结果已省略"));
+        assertTrue(loaded.compactedToolCallIds().isEmpty());
     }
 
     @Test
@@ -106,9 +129,51 @@ class ContextCompactorTest {
         String archived = Files.readString(archive);
         assertTrue(archived.contains("ORIGINAL_RESULT_"));
         assertTrue(archived.contains("a".repeat(40)));
+        assertEquals(24, archived.lines().count()); // 8 轮 × 3 条，无①重复归档。
+        assertTrue(session.compactedToolCallIds().isEmpty());
 
         // 最近轮完整保留
         assertTrue(joined.contains("FINAL_USER_TEXT"));
+    }
+
+    @Test
+    void archiveFailurePreservesOriginalMessagesInBothStages() throws Exception {
+        SessionStore store = new SessionStore(tmp);
+        for (long limit : List.of(1000L, 400L)) {
+            Session session = Session.create("sfail" + limit, 0);
+            session.messages().addAll(toolTurn("u".repeat(160), "call-1", "x".repeat(1600)));
+            session.messages().addAll(toolTurn("u".repeat(160), "call-2", "x".repeat(1600)));
+            session.messages().add(Message.user("u".repeat(160)));
+            session.messages().add(Message.user("u".repeat(160)));
+            List<Message> original = List.copyOf(session.messages());
+            // 用目录占据归档路径，确定性模拟写入失败。
+            Files.createDirectory(store.archivePath(session));
+
+            assertThrows(UncheckedIOException.class, () ->
+                    compactor(session, limit).forceCompact(session.messages(), n -> { }, null));
+
+            assertEquals(original, session.messages());
+            assertTrue(session.compactedToolCallIds().isEmpty());
+        }
+    }
+
+    @Test
+    void placeholderLikeToolOutputIsStillArchivedAndCallPairsStayIntact() throws Exception {
+        Session session = Session.create("sliteral", 0);
+        String output = "(grep 结果已省略：这是文件中的普通文本)\n" + "x".repeat(1600);
+        session.messages().addAll(toolTurn("old", "literal-call", output));
+        List<Message> recent = List.of(Message.user("previous"), Message.assistant("reply"), Message.user("current"));
+        session.messages().addAll(recent);
+
+        compactor(session, 1000).forceCompact(session.messages(), n -> { }, null);
+
+        assertTrue(Files.readString(new SessionStore(tmp).archivePath(session)).contains("x".repeat(1600)));
+        assertEquals("literal-call", session.messages().get(1).toolCalls().get(0).id());
+        assertEquals("literal-call", session.messages().get(2).toolCallId());
+        assertEquals(recent, session.messages().subList(3, session.messages().size()));
+        // 会话元数据不会进入模型的 Message JSON。
+        assertNull(new com.fasterxml.jackson.databind.ObjectMapper()
+                .valueToTree(session.messages().get(2)).get("compactedToolCallIds"));
     }
 
     @Test

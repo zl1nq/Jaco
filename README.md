@@ -3,14 +3,14 @@
 </p>
 
 <h1 align="center">JACO</h1>
-<div style="display: flex; align-items: center; gap: 12px; margin: 20px 0;">
-  <div style="flex: 1; height: 1px; background: #ccc;"></div>
-  <span style="color: #999; font-size: 14px;"><strong>JAVA CODER</strong></span>
-  <div style="flex: 1; height: 1px; background: #ccc;"></div>
-</div>
+
+<hr>
+
+<p align="center"><em>JAVA CODER</em></p>
+
 <p align="center">用 Java 21 从零构建的终端 AI 编程助手</p>
 
-JACO 将模型对话、工具调用和权限确认串成完整的 agent 循环。你可以在终端中让它阅读代码、修改文件、执行命令，或委派只读子 agent 调查问题。模型通过 OpenAI 兼容的 Chat Completions 接口接入，核心 agent 与终端界面独立，便于扩展工具和交互方式。
+> JACO 将模型对话、工具调用和权限确认串成完整的 agent 循环。 你可以在终端中让它阅读代码、修改文件、执行命令，或委派只读子 agent 调查问题。模型通过 OpenAI 兼容的 Chat Completions 接口接入，核心 agent 与终端界面独立，便于扩展工具和交互方式。
 
 ## 功能概览
 
@@ -98,11 +98,13 @@ java -jar /path/to/jaco/target/jaco.jar
 | `/help` | 显示可用命令 |
 | `/new` | 创建新会话，清空当前上下文与权限放行记录 |
 | `/sessions` | 按新到旧列出会话，`*` 标记当前会话 |
-| `/switch <会话 ID>` | 切换会话，支持唯一 ID 前缀 |
+| `/switch <会话 ID>` | 切换会话并清空权限放行记录，支持唯一 ID 前缀 |
 | `/exit` 或 `Ctrl+D` | 退出 |
 | `Ctrl+C` | 中断当前轮：取消模型流、终止命令子进程、拒绝待确认操作；已生成内容保留进会话 |
 
 启动时自动恢复最近一次会话；没有历史会话时创建新会话。
+
+新建会话或成功切换到其他会话后，需要重新确认工具授权；切回旧会话不会恢复此前授权。切换失败或切换到当前会话时，现有授权保持不变。
 
 ### 内置工具
 
@@ -191,7 +193,7 @@ workspace:
 JACO 用两层机制控制发送给模型的上下文体积：
 
 1. **单条工具输出归档**：超过 `max_tool_result_chars` 时，将该条输出完整写入归档，在对话中保留头尾预览与归档提示。
-2. **轮级压缩**：每轮开始检查上下文体积，达到 `context_limit` 的 70% 时触发，目标压至 40%。依次将旧工具结果替换为简短占位、归档旧轮并留下骨架摘要，必要时使用模型摘要兜底。
+2. **轮级压缩**：每轮开始检查上下文体积，超过 `context_limit` 的 70% 时触发，目标压至 40%。先在临时消息中计算压缩结果：旧工具结果替换为简短占位后若已达标，先归档被替换的原文，再更新会话；若仍未达标，则归档旧轮并留下骨架摘要，必要时使用模型摘要兜底。归档失败时保留原会话；已压缩工具结果的状态随会话保存，避免重复归档和改写占位。
 
 轮级压缩保护最近两轮，并保持工具调用与工具结果配对。归档保留原始内容，可通过 `recall` 检索；检索返回的长条目仍有展示截断。若服务端报告上下文超限，会强制压缩并重试一次。
 
