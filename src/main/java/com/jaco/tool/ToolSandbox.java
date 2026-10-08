@@ -3,6 +3,7 @@ package com.jaco.tool;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,10 +17,10 @@ public final class ToolSandbox {
 
     public ToolSandbox(Path workspaceRoot, List<String> extraRoots) {
         List<Path> all = new ArrayList<>();
-        all.add(workspaceRoot.toAbsolutePath().normalize());
+        all.add(normalize(workspaceRoot));
         if (extraRoots != null) {
             extraRoots.stream()
-                    .map(r -> Path.of(r).toAbsolutePath().normalize())
+                    .map(r -> normalize(Path.of(r)))
                     .forEach(all::add);
         }
         this.roots = List.copyOf(all);
@@ -39,15 +40,16 @@ public final class ToolSandbox {
     }
 
     private Path normalize(Path p) {
+        p = p.toAbsolutePath().normalize();
         try {
-            if (Files.exists(p)) {
+            if (Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {
                 return p.toRealPath();
             }
             // 不存在的路径（写场景）：用已存在的最近祖先做真实路径校验，防符号链接逃逸
             Path parent = p.getParent();
             while (parent != null) {
-                if (Files.exists(parent)) {
-                    return parent.toRealPath().resolve(p.getFileName());
+                if (Files.exists(parent, LinkOption.NOFOLLOW_LINKS)) {
+                    return parent.toRealPath().resolve(parent.relativize(p)).normalize();
                 }
                 parent = parent.getParent();
             }
