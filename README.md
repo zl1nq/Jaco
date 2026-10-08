@@ -4,8 +4,6 @@
 
 <h1 align="center">JACO</h1>
 
-<hr>
-
 <p align="center"><em>JAVA CODER</em></p>
 
 <p align="center">用 Java 21 从零构建的终端 AI 编程助手</p>
