@@ -2,22 +2,13 @@
   <img src="jaco.png" alt="JACO" width="640">
 </p>
 
-<div style="display: flex; flex-direction: column; align-items: center; text-align: center;">
-  <h1 style="margin-bottom: 4px;">JACO</h1>
-  <hr align="center" style="border: none; border-top: 1px solid #ddd; width: 100%; margin: 8px 0;">
-  <p style="font-size: 15px; font-style: italic; color: #666; margin-top: 0;">
-    JAVA CODER
-  </p>
+<h1 align="center">JACO</h1>
 
-</div>
+<hr>
 
-[//]: # (<h1 align="center">JACO</h1>)
+<p align="center"><em>JAVA CODER</em></p>
 
-[//]: # (<hr style="border: none; border-top: 1px solid #ddd; width: 60%; margin: 16px 0;">)
-
-[//]: # (<h3 style="text-align: center; font-size: 16px; font-style: italic;">JAVA CODER</h3>)
-
-[//]: # (<p align="center">用 Java 21 从零构建的终端 AI 编程助手</p>)
+<p align="center">用 Java 21 从零构建的终端 AI 编程助手</p>
 
 > JACO 将模型对话、工具调用和权限确认串成完整的 agent 循环。 你可以在终端中让它阅读代码、修改文件、执行命令，或委派只读子 agent 调查问题。模型通过 OpenAI 兼容的 Chat Completions 接口接入，核心 agent 与终端界面独立，便于扩展工具和交互方式。
 
