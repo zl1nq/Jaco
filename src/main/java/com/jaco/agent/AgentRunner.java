@@ -497,24 +497,31 @@ public final class AgentRunner {
 
             String result;
             boolean ok = true;
-            HookVerdict verdict = hooks.onBeforeToolCall(call);
-            if (!verdict.proceed()) {
-                result = "Permission denied: " + verdict.denyReason();
-                ok = false;
-            } else if (handle.isCancelled()) {
-                result = "ERROR: interrupted by user";
-                ok = false;
-            } else {
-                try {
-                    result = registry.execute(call, ctx);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+            try {
+                if (handle.isCancelled()) {
+                    throw new InterruptedException("interrupted by user");
+                }
+                var prepared = registry.prepare(call, ctx);
+                if (prepared.preview() != null) {
+                    handle.emit(new TurnEvent.ToolPreview(prepared.preview()));
+                }
+                HookVerdict verdict = hooks.onBeforeToolCall(call);
+                if (!verdict.proceed()) {
+                    result = "Permission denied: " + verdict.denyReason();
+                    ok = false;
+                } else if (handle.isCancelled()) {
                     result = "ERROR: interrupted by user";
                     ok = false;
-                } catch (Exception e) {
-                    result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-                    ok = false;
+                } else {
+                    result = prepared.execute();
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                result = "ERROR: interrupted by user";
+                ok = false;
+            } catch (Exception e) {
+                result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                ok = false;
             }
             result = gateToolResult(result);
             session.messages().add(Message.toolResult(call.id(), result));
@@ -662,6 +669,8 @@ public final class AgentRunner {
 
                 # 工具使用守则
                 - 修改文件前先 read_file 了解现状；大文件用 offset/limit 分页读取
+                - 修改已有文件优先使用 edit_file，old_text 必须精确唯一匹配；write_file 用于新建或明确的整文件重写
+                - 修改已有文件必须传 expected_version，使用 read_file 或上次写入返回的文件版本；版本不匹配时重新读取，不能沿用旧版本
                 - run_command 会真实执行命令，命令必须与任务直接相关
                 - 路径只允许在工作目录内
                 """.formatted(workspaceRoot, System.getProperty("os.name"), shell, LocalDate.now());

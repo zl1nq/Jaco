@@ -27,6 +27,7 @@ class AgentRunnerSessionPermissionsTest {
     private static final String NEWER = "s20260102-000000";
     private static final List<ToolCall> CALLS = List.of(
             call("write_file", "{\"path\":\"example.txt\",\"content\":\"hello\"}"),
+            call("edit_file", "{\"path\":\"example.txt\",\"old_text\":\"old\",\"new_text\":\"new\"}"),
             call("run_command", "{\"command\":\"echo hello\"}"),
             call("task", "{\"prompt\":\"调查项目结构\"}"));
 

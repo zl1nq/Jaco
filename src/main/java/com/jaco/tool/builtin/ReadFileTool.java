@@ -23,7 +23,8 @@ public final class ReadFileTool implements Tool {
 
     @Override
     public String description() {
-        return "读取文本文件内容（带行号）。大文件可用 offset/limit 分页读取。";
+        return "读取 UTF-8 文本文件（带行号及完整文件的 SHA-256 版本）。大文件可用 offset/limit 分页读取。"
+                + "修改时将返回的文件版本传入 edit_file/write_file 的 expected_version。";
     }
 
     @Override
@@ -46,15 +47,23 @@ public final class ReadFileTool implements Tool {
         if (!Files.isRegularFile(file)) {
             throw new ToolException("文件不存在或不是普通文件: " + file);
         }
-        List<String> lines = Files.readAllLines(file);
+        byte[] snapshot = FileChange.snapshot(file);
+        if (snapshot == null) {
+            throw new ToolException("文件已不存在: " + file);
+        }
+        List<String> lines = FileChange.text(snapshot).lines().toList();
+        String header = "文件版本: " + FileVersion.of(snapshot) + "\n";
         int offset = Math.max(1, args.path("offset").asInt(1));
         int limit = Math.max(1, args.path("limit").asInt(2000));
+        if (lines.isEmpty() && offset == 1) {
+            return header + "(文件为空)";
+        }
         if (offset > lines.size()) {
             throw new ToolException("offset " + offset + " 超出文件行数 " + lines.size());
         }
 
-        StringBuilder sb = new StringBuilder();
-        int last = Math.min(lines.size(), offset - 1 + limit);
+        StringBuilder sb = new StringBuilder(header);
+        int last = (int) Math.min(lines.size(), (long) offset - 1 + limit);
         for (int i = offset - 1; i < last; i++) {
             String line = lines.get(i);
             if (line.length() > MAX_LINE_LENGTH) {

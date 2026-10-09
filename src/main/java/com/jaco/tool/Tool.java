@@ -20,4 +20,9 @@ public interface Tool {
 
     /** 执行工具。抛出的任何异常都会被转成 "ERROR: ..." 回喂模型，不会中断 agent loop。 */
     String execute(JsonNode args, ToolContext ctx) throws Exception;
+
+    /** 默认工具不需要预览；文件工具可只读准备修改计划。 */
+    default PreparedToolCall prepare(JsonNode args, ToolContext ctx) throws Exception {
+        return new PreparedToolCall(null, () -> execute(args, ctx));
+    }
 }
