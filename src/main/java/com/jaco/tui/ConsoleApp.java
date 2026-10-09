@@ -117,7 +117,9 @@ public final class ConsoleApp {
         while (true) {
             String line;
             try {
-                line = reader.readLine(ANSI_CYAN + "你 » " + ANSI_RESET);
+                printInputSeparator();
+                line = reader.readLine(ANSI_GREEN + BOLD + "  你的输入" + ANSI_RESET + "\n"
+                        + ANSI_GREEN + BOLD + "❯ " + ANSI_RESET);
             } catch (UserInterruptException e) {
                 continue;
             } catch (EndOfFileException e) {
@@ -136,6 +138,15 @@ public final class ConsoleApp {
             runTurn(line);
         }
         println(ANSI_DIM + "再见。" + ANSI_RESET);
+    }
+
+    /** 保留最后一列，避免分隔线铺满终端时触发自动换行；每次输入重新读取宽度。 */
+    private void printInputSeparator() {
+        ensureLineStart();
+        println("");
+        int width = terminal.getWidth();
+        int columns = width > 0 ? width : 80;
+        println(ANSI_DIM + "─".repeat(Math.max(1, columns - 1)) + ANSI_RESET);
     }
 
     /** 无右边框的欢迎横幅——避免中英文混排时的宽度对齐问题。 */
