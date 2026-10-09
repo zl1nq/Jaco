@@ -92,20 +92,9 @@ public final class ConsoleApp {
         String currentId = agent.session().id();
         for (com.jaco.session.Session s : sessions) {
             String marker = s.id().equals(currentId) ? ANSI_GREEN + "*" + ANSI_RESET : " ";
-            println(marker + " " + s.id() + ANSI_DIM + "  " + s.messages().size() + " 条消息  "
-                    + firstUserPrompt(s) + ANSI_RESET);
+            println(marker + " " + s.id() + "  " + s.displayTitle() + ANSI_DIM + "  "
+                    + s.messages().size() + " 条消息" + ANSI_RESET);
         }
-    }
-
-    /** 首条用户消息做预览；压缩器注入的标记行跳过。 */
-    private static String firstUserPrompt(com.jaco.session.Session s) {
-        return s.messages().stream()
-                .filter(m -> m.role() == com.jaco.llm.Role.USER)
-                .map(m -> m.content() == null ? "" : m.content().replace('\n', ' ').strip())
-                .filter(t -> !t.isEmpty() && !t.startsWith("[早前 ") && !t.startsWith("[历史摘要]"))
-                .findFirst()
-                .map(t -> t.length() > 40 ? t.substring(0, 40) + "…" : t)
-                .orElse("");
     }
 
     public void run() {

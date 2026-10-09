@@ -176,6 +176,7 @@ public final class AgentRunner {
                 handle.emit(new TurnEvent.Done(null, null, false, true, null, 0));
                 return;
             }
+            session = session.withFirstPromptTitle(prompt);
             session.messages().add(Message.user(effective));
 
             // 压缩检查发生在轮开始（循环外一层，循环本体不感知）
