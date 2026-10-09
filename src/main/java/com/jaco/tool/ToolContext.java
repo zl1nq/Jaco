@@ -11,5 +11,12 @@ public record ToolContext(
         String shellChoice,
         AtomicReference<Process> currentProcess,
         java.util.function.BooleanSupplier cancelled,
-        Path archiveFile) {
+        Path archiveFile,
+        int maxToolResultChars) {
+
+    public ToolContext(Path workspaceRoot, ToolSandbox sandbox, String shellChoice,
+                       AtomicReference<Process> currentProcess,
+                       java.util.function.BooleanSupplier cancelled, Path archiveFile) {
+        this(workspaceRoot, sandbox, shellChoice, currentProcess, cancelled, archiveFile, 8000);
+    }
 }
