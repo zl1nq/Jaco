@@ -80,7 +80,22 @@ public final class ConsoleApp {
             }
             return true;
         }));
+        commands.put("delete", new Command.Simple("delete", "删除历史会话：/delete <会话id>（支持唯一前缀，需确认）", args -> {
+            println(agent.deleteSession(args, this::confirmSessionDeletion));
+            return true;
+        }));
         commands.put("exit", new Command.Simple("exit", "退出（Ctrl+D 同效）", args -> false));
+    }
+
+    private boolean confirmSessionDeletion(com.jaco.session.Session target) {
+        println(ANSI_YELLOW + "将删除会话 " + target.id() + "（" + target.displayTitle()
+                + "）及对应归档，此操作不可恢复。" + ANSI_RESET);
+        try {
+            String answer = reader.readLine("确认删除？[y/N] ");
+            return answer != null && answer.strip().equalsIgnoreCase("y");
+        } catch (UserInterruptException | EndOfFileException e) {
+            return false;
+        }
     }
 
     private void printSessions() {
