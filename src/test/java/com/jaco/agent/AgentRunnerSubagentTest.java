@@ -19,6 +19,7 @@ import com.jaco.tool.builtin.RecallTool;
 import com.jaco.tool.builtin.ReadFileTool;
 import com.jaco.tool.builtin.TaskTool;
 import com.jaco.tool.builtin.WriteFileTool;
+import com.jaco.tool.builtin.EditFileTool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -58,6 +59,7 @@ class AgentRunnerSubagentTest {
         ToolRegistry registry = new ToolRegistry();
         registry.register(new ReadFileTool());
         registry.register(new WriteFileTool());
+        registry.register(new EditFileTool());
         registry.register(new ListDirTool());
         registry.register(new GrepTool());
         registry.register(new RecallTool());
@@ -109,13 +111,16 @@ class AgentRunnerSubagentTest {
     void writeToolsDeniedInsideSubagent() throws Exception {
         ChatStream s1 = TestStreams.of(
                 new StreamChunk.ToolCallDelta(0, "c1", "write_file", "{\"path\":\"x\",\"content\":\"y\"}"),
+                new StreamChunk.ToolCallDelta(1, "c2", "edit_file", "{\"path\":\"x\",\"old_text\":\"old\",\"new_text\":\"new\"}"),
                 new StreamChunk.Done("tool_calls", null));
         ChatStream s2 = TestStreams.of(
                 new StreamChunk.Delta("收到拒绝，放弃"),
                 new StreamChunk.Done("stop", null));
         FakeClient client = new FakeClient(List.of(s1, s2));
 
+        java.nio.file.Files.writeString(tmp.resolve("x"), "old");
         assertEquals("收到拒绝，放弃", runner(client).runSubagent("改文件", () -> false));
+        assertEquals("old", java.nio.file.Files.readString(tmp.resolve("x")));
 
         String msgs = render(client.requests.get(1).messages());
         assertTrue(msgs.contains("ERROR: 子 agent 只允许只读工具"));

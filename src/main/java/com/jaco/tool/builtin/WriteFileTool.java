@@ -11,9 +11,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.InvalidPathException;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFileAttributeView;
 
 /** 严格校验参数后，通过同目录临时文件原子覆盖或新建 UTF-8 文件。 */
 public final class WriteFileTool implements Tool {
@@ -80,29 +77,7 @@ public final class WriteFileTool implements Tool {
             throw new ToolException("目标不是普通文件: " + file);
         }
         long oldSize = existed ? Files.size(file) : -1;
-        Files.createDirectories(file.getParent());
-        Path temporary = Files.createTempFile(file.getParent(), ".jaco-write-", ".tmp");
-        long newSize;
-        try {
-            Files.writeString(temporary, content);
-            // 替换文件会改变 inode，保留已有文件的 POSIX 权限（尤其是可执行位）。
-            if (existed && Files.getFileAttributeView(file, PosixFileAttributeView.class) != null) {
-                Files.setPosixFilePermissions(temporary, Files.getPosixFilePermissions(file));
-            }
-            newSize = Files.size(temporary);
-            try {
-                Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                throw new IOException("文件系统不支持原子替换，未覆盖目标文件: " + file, e);
-            }
-        } catch (IOException | RuntimeException e) {
-            try {
-                Files.deleteIfExists(temporary);
-            } catch (IOException cleanupError) {
-                e.addSuppressed(cleanupError);
-            }
-            throw e;
-        }
+        long newSize = AtomicFileWriter.write(file, content);
         if (existed) {
             return "已覆盖 " + file + "（" + oldSize + " 字节 → " + newSize + " 字节）";
         }
