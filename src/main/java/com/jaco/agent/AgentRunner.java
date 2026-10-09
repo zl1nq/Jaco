@@ -152,6 +152,46 @@ public final class AgentRunner {
         return sessions.listSessions();
     }
 
+    /** 两轮之间删除历史会话；只有明确确认后才操作文件，返回可展示的结果。 */
+    public String deleteSession(String idOrPrefix, java.util.function.Predicate<Session> confirm) {
+        String id = idOrPrefix == null ? "" : idOrPrefix.strip();
+        if (id.isEmpty() || !id.matches("[A-Za-z0-9._-]+")) {
+            return "用法: /delete <会话id>（支持唯一前缀），/sessions 查看";
+        }
+        Optional<Session> exact = sessions.load(id);
+        Session target;
+        if (exact.isPresent()) {
+            target = exact.get();
+        } else {
+            List<Session> matched = sessions.listSessions().stream()
+                    .filter(s -> s.id().startsWith(id)).toList();
+            if (matched.isEmpty()) {
+                return "没有匹配的会话: " + id;
+            }
+            if (matched.size() > 1) {
+                return "前缀不唯一（匹配 " + matched.size() + " 个），请加长: " + id;
+            }
+            target = matched.get(0);
+        }
+        if (target.id().equals(session.id())) {
+            return "不能删除当前会话，请先 /switch 切换或 /new 创建新会话";
+        }
+        if (!confirm.test(target)) {
+            return "已取消删除";
+        }
+        if (target.id().equals(session.id())) {
+            return "不能删除当前会话，请先 /switch 切换或 /new 创建新会话";
+        }
+        try {
+            return sessions.delete(target.id())
+                    ? "已删除会话 " + target.id() + "（" + target.displayTitle() + "）及对应归档"
+                    : "会话已不存在: " + target.id();
+        } catch (IOException | IllegalArgumentException e) {
+            log.warn("删除会话 {} 失败", target.id(), e);
+            return "删除失败: " + e.getMessage() + "（部分文件可能已删除，请检查后重试）";
+        }
+    }
+
     /** 启动一轮：loop 在后台线程运行，返回的事件句柄由调用方消费。 */
     public TurnHandle runTurn(String prompt) {
         TurnHandle handle = new TurnHandle();
@@ -176,6 +216,7 @@ public final class AgentRunner {
                 handle.emit(new TurnEvent.Done(null, null, false, true, null, 0));
                 return;
             }
+            session = session.withFirstPromptTitle(prompt);
             session.messages().add(Message.user(effective));
 
             // 压缩检查发生在轮开始（循环外一层，循环本体不感知）
@@ -376,7 +417,7 @@ public final class AgentRunner {
     /** 子 agent 的工具执行：白名单外的调用直接拒绝回喂；超限只留头尾预览（不写父归档）。 */
     private void executeSubagentTools(List<ToolCall> calls, List<Message> messages, BooleanSupplier cancelled) {
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
-                new AtomicReference<>(), cancelled, sessions.archivePath(session));
+                new AtomicReference<>(), cancelled, sessions.archivePath(session), maxToolResultChars);
         for (ToolCall call : calls) {
             String name = call.function().name() != null ? call.function().name() : "?";
             String result;
@@ -448,7 +489,7 @@ public final class AgentRunner {
     /** 串行执行工具；每个 tool_call 都必须产生 tool result（协议要求成对）。 */
     private void executeTools(List<ToolCall> calls, TurnHandle handle) {
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
-                handle.processRef(), handle::isCancelled, sessions.archivePath(session));
+                handle.processRef(), handle::isCancelled, sessions.archivePath(session), maxToolResultChars);
         for (ToolCall call : calls) {
             String name = call.function().name() != null ? call.function().name() : "?";
             String summary = registry.summaryOf(call);

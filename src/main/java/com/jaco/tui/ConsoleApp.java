@@ -80,7 +80,22 @@ public final class ConsoleApp {
             }
             return true;
         }));
+        commands.put("delete", new Command.Simple("delete", "删除历史会话：/delete <会话id>（支持唯一前缀，需确认）", args -> {
+            println(agent.deleteSession(args, this::confirmSessionDeletion));
+            return true;
+        }));
         commands.put("exit", new Command.Simple("exit", "退出（Ctrl+D 同效）", args -> false));
+    }
+
+    private boolean confirmSessionDeletion(com.jaco.session.Session target) {
+        println(ANSI_YELLOW + "将删除会话 " + target.id() + "（" + target.displayTitle()
+                + "）及对应归档，此操作不可恢复。" + ANSI_RESET);
+        try {
+            String answer = reader.readLine("确认删除？[y/N] ");
+            return answer != null && answer.strip().equalsIgnoreCase("y");
+        } catch (UserInterruptException | EndOfFileException e) {
+            return false;
+        }
     }
 
     private void printSessions() {
@@ -92,20 +107,9 @@ public final class ConsoleApp {
         String currentId = agent.session().id();
         for (com.jaco.session.Session s : sessions) {
             String marker = s.id().equals(currentId) ? ANSI_GREEN + "*" + ANSI_RESET : " ";
-            println(marker + " " + s.id() + ANSI_DIM + "  " + s.messages().size() + " 条消息  "
-                    + firstUserPrompt(s) + ANSI_RESET);
+            println(marker + " " + s.id() + "  " + s.displayTitle() + ANSI_DIM + "  "
+                    + s.messages().size() + " 条消息" + ANSI_RESET);
         }
-    }
-
-    /** 首条用户消息做预览；压缩器注入的标记行跳过。 */
-    private static String firstUserPrompt(com.jaco.session.Session s) {
-        return s.messages().stream()
-                .filter(m -> m.role() == com.jaco.llm.Role.USER)
-                .map(m -> m.content() == null ? "" : m.content().replace('\n', ' ').strip())
-                .filter(t -> !t.isEmpty() && !t.startsWith("[早前 ") && !t.startsWith("[历史摘要]"))
-                .findFirst()
-                .map(t -> t.length() > 40 ? t.substring(0, 40) + "…" : t)
-                .orElse("");
     }
 
     public void run() {

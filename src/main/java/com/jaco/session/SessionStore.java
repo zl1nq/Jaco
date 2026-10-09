@@ -99,6 +99,27 @@ public final class SessionStore {
         }
     }
 
+    /** 删除单个会话及归档；只接受完整 ID，不允许删除目录或跟随符号链接。 */
+    public boolean delete(String id) throws IOException {
+        if (id == null || !id.matches("[A-Za-z0-9._-]+")) {
+            throw new IllegalArgumentException("无效的会话 ID");
+        }
+        Path file = dir.resolve(id + ".json");
+        Path archive = dir.resolve(id + ".archive.jsonl");
+        if (!Files.exists(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        for (Path path : List.of(file, archive)) {
+            if (Files.exists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("不是普通文件，无法删除: " + path);
+            }
+        }
+        // 先清理归档；归档删除失败时保留会话文件，便于用户重试。
+        Files.deleteIfExists(archive);
+        return Files.deleteIfExists(file);
+    }
+
     /** 上下文压缩归档文件（JSONL，追加式）。 */
     public Path archivePath(Session session) {
         return dir.resolve(session.id() + ".archive.jsonl");

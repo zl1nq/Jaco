@@ -9,6 +9,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SessionStoreTest {
 
@@ -60,5 +62,16 @@ class SessionStoreTest {
         assertTrue(loaded.compactedToolCallIds().isEmpty());
         loaded.compactedToolCallIds().add("call-1");
         assertEquals(java.util.Set.of("call-1"), loaded.compactedToolCallIds());
+    }
+
+    @Test
+    void deleteHandlesMissingArchiveAndRejectsPathTraversal() throws Exception {
+        SessionStore store = new SessionStore(tmp);
+        store.save(Session.create("s1", 1));
+        assertTrue(store.delete("s1"));
+        assertTrue(store.load("s1").isEmpty());
+        assertFalse(store.delete("s1"));
+        assertThrows(IllegalArgumentException.class, () -> store.delete("../outside"));
+        assertThrows(IllegalArgumentException.class, () -> store.delete(null));
     }
 }
