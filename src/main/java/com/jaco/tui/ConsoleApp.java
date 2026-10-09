@@ -84,7 +84,21 @@ public final class ConsoleApp {
             println(agent.deleteSession(args, this::confirmSessionDeletion));
             return true;
         }));
+        commands.put("memory", new Command.Simple("memory", "用户画像：/memory [forget <ID> | clear | off | on]", args -> {
+            println(agent.memoryCommand(args, this::confirmMemoryClear));
+            return true;
+        }));
         commands.put("exit", new Command.Simple("exit", "退出（Ctrl+D 同效）", args -> false));
+    }
+
+    private boolean confirmMemoryClear() {
+        println(ANSI_YELLOW + "将清空全部用户画像（包括所有项目），此操作不可恢复。" + ANSI_RESET);
+        try {
+            String answer = reader.readLine("确认清空？[y/N] ");
+            return answer != null && answer.strip().equalsIgnoreCase("y");
+        } catch (UserInterruptException | EndOfFileException e) {
+            return false;
+        }
     }
 
     private boolean confirmSessionDeletion(com.jaco.session.Session target) {
@@ -275,6 +289,7 @@ public final class ConsoleApp {
                         println(ANSI_DIM + "  │ " + lines[i] + ANSI_RESET);
                     }
                 } else if (event instanceof TurnEvent.Notice n) {
+                    flushPending(renderer, pending);
                     // 暗色状态行；spinner 在下一行继续（sawOutput 仍为 false 时）
                     spinner.stop();
                     rawPrint(ANSI_DIM + n.text() + ANSI_RESET + "\n");

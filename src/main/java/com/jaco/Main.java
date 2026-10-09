@@ -7,6 +7,7 @@ import com.jaco.config.ProviderConfig;
 import com.jaco.hook.HookChain;
 import com.jaco.llm.OpenAiCompatClient;
 import com.jaco.session.SessionStore;
+import com.jaco.memory.UserProfileStore;
 import com.jaco.tool.PermissionHook;
 import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
@@ -88,6 +89,11 @@ public final class Main {
                 config.effectiveMaxIterations(),
                 config.effectiveContextLimit(),
                 config.effectiveMaxToolResultChars());
+        try {
+            agent.bindUserProfile(new UserProfileStore(home.resolve("user-profile.json")));
+        } catch (IOException | IllegalArgumentException e) {
+            System.err.println("用户画像加载失败，本次不启用自动记忆；请检查 user-profile.json，原文件保留。");
+        }
         agent.start();
         taskTool.bind(agent::runSubagent);
 
