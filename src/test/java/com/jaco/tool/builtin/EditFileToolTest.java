@@ -34,8 +34,12 @@ class EditFileToolTest {
     }
 
     private String edit(String path, String oldText, String newText) throws Exception {
-        return tool.execute(MAPPER.createObjectNode().put("path", path)
-                .put("old_text", oldText).put("new_text", newText), context());
+        var args = MAPPER.createObjectNode().put("path", path).put("old_text", oldText).put("new_text", newText);
+        Path file = path.isBlank() || path.indexOf('\0') >= 0 ? null : tmp.resolve(path);
+        if (file != null && Files.isRegularFile(file)) {
+            args.put("expected_version", FileVersion.of(Files.readAllBytes(file)));
+        }
+        return tool.execute(args, context());
     }
 
     private void assertNoTemporaryFiles() throws IOException {
@@ -139,6 +143,7 @@ class EditFileToolTest {
         registry.register(tool);
         assertEquals("edit_file", registry.definitions().get(0).function().name());
         var args = MAPPER.createObjectNode().put("path", "code.txt").put("old_text", "old").put("new_text", "new");
+        args.put("expected_version", FileVersion.of(Files.readAllBytes(tmp.resolve("code.txt"))));
         registry.execute(new ToolCall("c1", "function", new ToolCall.FunctionCall("edit_file", args.toString())), context());
         assertEquals("new", Files.readString(tmp.resolve("code.txt")));
     }

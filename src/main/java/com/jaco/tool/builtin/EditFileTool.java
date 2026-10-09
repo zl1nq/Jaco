@@ -23,7 +23,7 @@ public final class EditFileTool implements Tool {
 
     @Override
     public String description() {
-        return "局部修改已有 UTF-8 文件：先 read_file，再提供 path、old_text、new_text。"
+        return "局部修改已有 UTF-8 文件：先 read_file，再提供 path、old_text、new_text 和 expected_version（读取返回的文件版本）。"
                 + "old_text 必须非空且在文件中精确唯一匹配（包括空白和换行，不要带读取输出的行号）。"
                 + "未找到或多处匹配时拒绝修改，请重新读取或增加定位上下文。"
                 + "new_text 可为空字符串以删除片段；使用原子替换，文件其他内容保持原样。";
@@ -35,7 +35,8 @@ public final class EditFileTool implements Tool {
                 .string("path", "已有文件路径，必须是非空白字符串")
                 .string("old_text", "要替换的非空原文，需精确唯一匹配；包含足够上下文，不含行号")
                 .string("new_text", "替换文本，空字符串表示删除匹配片段")
-                .required("path", "old_text", "new_text").build();
+                .string("expected_version", "必填：read_file 或上次写入返回的 sha256: 版本，整个文件版本必须匹配")
+                .required("path", "old_text", "new_text", "expected_version").build();
         schema.put("additionalProperties", false);
         return schema;
     }
@@ -73,7 +74,8 @@ public final class EditFileTool implements Tool {
         var fields = args.fieldNames();
         while (fields.hasNext()) {
             String field = fields.next();
-            if (!field.equals("path") && !field.equals("old_text") && !field.equals("new_text")) {
+            if (!field.equals("path") && !field.equals("old_text") && !field.equals("new_text")
+                    && !field.equals("expected_version")) {
                 throw new ToolException("未知的 edit_file 参数: " + field);
             }
         }
@@ -90,6 +92,7 @@ public final class EditFileTool implements Tool {
         if (snapshot == null) {
             throw new ToolException("文件已不存在: " + file);
         }
+        FileVersion.verify(args, snapshot);
         String original = FileChange.text(snapshot);
         int start = original.indexOf(oldText);
         if (start < 0) {

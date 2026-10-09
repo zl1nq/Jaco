@@ -30,14 +30,28 @@ class AgentRunnerFilePreviewTest {
     Path tmp;
 
     private AgentRunner runner(String tool) throws Exception {
+        return runner(tool, null);
+    }
+
+    private AgentRunner runner(String tool, String expectedVersion) throws Exception {
         OpenAiCompatClient client = new OpenAiCompatClient("http://localhost", "k") {
             int requestIndex;
             @Override
-            public ChatStream chatStream(ChatRequest request) {
+            public ChatStream chatStream(ChatRequest request) throws java.io.IOException {
                 if (requestIndex++ % 2 == 0) {
+                    String version;
+                    try {
+                        version = "sha256:" + java.util.HexFormat.of().formatHex(
+                                java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(tmp.resolve("code.txt"))));
+                    } catch (java.security.NoSuchAlgorithmException e) {
+                        throw new AssertionError(e);
+                    }
+                    if (expectedVersion != null) {
+                        version = expectedVersion;
+                    }
                     String args = tool.equals("edit_file")
-                            ? "{\"path\":\"code.txt\",\"old_text\":\"old\",\"new_text\":\"new\"}"
-                            : "{\"path\":\"code.txt\",\"content\":\"new\"}";
+                            ? "{\"path\":\"code.txt\",\"old_text\":\"old\",\"new_text\":\"new\",\"expected_version\":\"" + version + "\"}"
+                            : "{\"path\":\"code.txt\",\"content\":\"new\",\"expected_version\":\"" + version + "\"}";
                     return TestStreams.of(new StreamChunk.ToolCallDelta(0, "c" + requestIndex, tool, args),
                             new StreamChunk.Done("tool_calls", null));
                 }
@@ -122,5 +136,20 @@ class AgentRunnerFilePreviewTest {
         var events = turn(agent, request -> fail("会话放行后不应再次确认"));
         assertTrue(events.stream().anyMatch(e -> e instanceof TurnEvent.ToolPreview));
         assertEquals("new", Files.readString(tmp.resolve("code.txt")));
+    }
+
+    @Test
+    void staleReadVersionFailsBeforePreviewAndConfirmation() throws Exception {
+        Files.writeString(tmp.resolve("code.txt"), "old");
+        String read = new com.jaco.tool.builtin.ReadFileTool().execute(
+                new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("path", "code.txt"),
+                new com.jaco.tool.ToolContext(tmp, new ToolSandbox(tmp, List.of()), "auto", null, () -> false, null));
+        String version = read.split("\n", 2)[0].substring("文件版本: ".length());
+        Files.writeString(tmp.resolve("code.txt"), "old plus user change");
+        var events = turn(runner("edit_file", version), request -> fail("旧版本不应进入权限确认"));
+        assertFalse(events.stream().anyMatch(e -> e instanceof TurnEvent.ToolPreview));
+        assertTrue(events.stream().anyMatch(e -> e instanceof TurnEvent.ToolCallEnd end
+                && !end.ok() && end.summary().contains("版本不匹配")));
+        assertEquals("old plus user change", Files.readString(tmp.resolve("code.txt")));
     }
 }

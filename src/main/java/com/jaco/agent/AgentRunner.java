@@ -670,6 +670,7 @@ public final class AgentRunner {
                 # 工具使用守则
                 - 修改文件前先 read_file 了解现状；大文件用 offset/limit 分页读取
                 - 修改已有文件优先使用 edit_file，old_text 必须精确唯一匹配；write_file 用于新建或明确的整文件重写
+                - 修改已有文件必须传 expected_version，使用 read_file 或上次写入返回的文件版本；版本不匹配时重新读取，不能沿用旧版本
                 - run_command 会真实执行命令，命令必须与任务直接相关
                 - 路径只允许在工作目录内
                 """.formatted(workspaceRoot, System.getProperty("os.name"), shell, LocalDate.now());

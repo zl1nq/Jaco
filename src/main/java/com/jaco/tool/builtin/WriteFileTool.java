@@ -24,7 +24,8 @@ public final class WriteFileTool implements Tool {
     @Override
     public String description() {
         return "把 content 完整写入文件（整文件覆盖或新建，父目录自动创建，UTF-8 原子写入）。"
-                + "path 必须是非空白字符串，content 必须显式提供字符串（可为空）。修改前应先 read_file 了解现状。";
+                + "path 必须是非空白字符串，content 必须显式提供字符串（可为空）。"
+                + "覆盖已有文件必须先 read_file，并传入其文件版本作为 expected_version；新建可省略版本。";
     }
 
     @Override
@@ -32,6 +33,7 @@ public final class WriteFileTool implements Tool {
         ObjectNode schema = (ObjectNode) JsonSchema.object()
                 .string("path", "目标文件路径（相对于工作目录或绝对路径）")
                 .string("content", "要写入的完整内容（UTF-8 文本）")
+                .string("expected_version", "覆盖已有文件必填：read_file 或上次写入返回的 sha256: 版本；新建时省略")
                 .required("path", "content")
                 .build();
         schema.put("additionalProperties", false);
@@ -70,7 +72,7 @@ public final class WriteFileTool implements Tool {
         var names = args.fieldNames();
         while (names.hasNext()) {
             String name = names.next();
-            if (!name.equals("path") && !name.equals("content")) {
+            if (!name.equals("path") && !name.equals("content") && !name.equals("expected_version")) {
                 throw new ToolException("未知的 write_file 参数: " + name);
             }
         }
@@ -88,6 +90,11 @@ public final class WriteFileTool implements Tool {
         if (existed && !Files.isRegularFile(file)) {
             throw new ToolException("目标不是普通文件: " + file);
         }
-        return FileChange.prepare(file, FileChange.snapshot(file), content, existed ? "已覆盖" : "已创建");
+        byte[] snapshot = FileChange.snapshot(file);
+        if (existed && snapshot == null) {
+            throw new ToolException("文件在准备修改时已删除，请重新读取");
+        }
+        FileVersion.verify(args, snapshot);
+        return FileChange.prepare(file, snapshot, content, snapshot != null ? "已覆盖" : "已创建");
     }
 }

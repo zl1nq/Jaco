@@ -37,7 +37,8 @@ class FilePreviewTest {
     void localPreviewShowsContextAndLineNumbersWithoutWriting() throws Exception {
         Files.writeString(tmp.resolve("code.txt"), "first\nold\nlast\n");
         var plan = new EditFileTool().prepare(new ObjectMapper().createObjectNode()
-                .put("path", "code.txt").put("old_text", "old").put("new_text", "new"), context());
+                .put("path", "code.txt").put("old_text", "old").put("new_text", "new")
+                .put("expected_version", FileVersion.of(Files.readAllBytes(tmp.resolve("code.txt")))), context());
         assertTrue(plan.preview().contains("新增 1 行，删除 1 行"));
         assertTrue(plan.preview().contains("- 2:- | old"));
         assertTrue(plan.preview().contains("+ -:2 | new"));
@@ -52,6 +53,7 @@ class FilePreviewTest {
         for (boolean edit : List.of(false, true)) {
             Files.writeString(file, "old");
             var args = new ObjectMapper().createObjectNode().put("path", "code.txt");
+            args.put("expected_version", FileVersion.of(Files.readAllBytes(file)));
             var plan = edit ? new EditFileTool().prepare(args.put("old_text", "old").put("new_text", "new"), context())
                     : new WriteFileTool().prepare(args.put("content", "new"), context());
             Files.writeString(file, "user changed");

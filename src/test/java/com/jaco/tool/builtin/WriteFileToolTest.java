@@ -34,7 +34,12 @@ class WriteFileToolTest {
     }
 
     private String write(String path, String content) throws Exception {
-        return tool.execute(MAPPER.createObjectNode().put("path", path).put("content", content), context());
+        var args = MAPPER.createObjectNode().put("path", path).put("content", content);
+        Path file = path.isBlank() || path.indexOf('\0') >= 0 ? null : tmp.resolve(path);
+        if (file != null && Files.isRegularFile(file)) {
+            args.put("expected_version", FileVersion.of(Files.readAllBytes(file)));
+        }
+        return tool.execute(args, context());
     }
 
     private void assertNoTemporaryFiles(Path directory) throws IOException {
