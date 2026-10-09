@@ -51,6 +51,10 @@ public final class ToolRegistry {
 
     /** 执行工具；未知工具/参数非法抛 ToolException。 */
     public String execute(ToolCall call, ToolContext ctx) throws Exception {
+        return prepare(call, ctx).execute();
+    }
+
+    public PreparedToolCall prepare(ToolCall call, ToolContext ctx) throws Exception {
         Tool tool = tools.get(call.function().name());
         if (tool == null) {
             throw new ToolException("未知工具: " + call.function().name());
@@ -61,6 +65,6 @@ public final class ToolRegistry {
         } catch (Exception e) {
             throw new ToolException("参数不是合法 JSON: " + e.getMessage());
         }
-        return tool.execute(args, ctx);
+        return tool.prepare(args, ctx);
     }
 }

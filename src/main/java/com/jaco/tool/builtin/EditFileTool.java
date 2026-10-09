@@ -6,6 +6,7 @@ import com.jaco.tool.JsonSchema;
 import com.jaco.tool.Tool;
 import com.jaco.tool.ToolContext;
 import com.jaco.tool.ToolException;
+import com.jaco.tool.PreparedToolCall;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -46,6 +47,17 @@ public final class EditFileTool implements Tool {
 
     @Override
     public String execute(JsonNode args, ToolContext ctx) throws IOException {
+        try {
+            return prepare(args, ctx).execute();
+        } catch (IOException | RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+    }
+
+    @Override
+    public PreparedToolCall prepare(JsonNode args, ToolContext ctx) throws IOException {
         if (args == null || !args.isObject()) {
             throw new ToolException("edit_file 参数必须是 JSON 对象");
         }
@@ -74,7 +86,11 @@ public final class EditFileTool implements Tool {
         if (!Files.isRegularFile(file)) {
             throw new ToolException("文件不存在或不是普通文件: " + file);
         }
-        String original = Files.readString(file);
+        byte[] snapshot = FileChange.snapshot(file);
+        if (snapshot == null) {
+            throw new ToolException("文件已不存在: " + file);
+        }
+        String original = FileChange.text(snapshot);
         int start = original.indexOf(oldText);
         if (start < 0) {
             throw new ToolException("未找到 old_text 的精确匹配，文件未修改；请重新读取并检查空白和换行");
@@ -82,13 +98,8 @@ public final class EditFileTool implements Tool {
         if (original.indexOf(oldText, start + 1) >= 0) {
             throw new ToolException("old_text 存在多处匹配，文件未修改；请增加定位上下文");
         }
-        if (oldText.equals(newText)) {
-            return "无需修改 " + file + "（old_text 与 new_text 相同）";
-        }
         String updated = original.substring(0, start) + newText + original.substring(start + oldText.length());
-        long oldSize = Files.size(file);
-        long newSize = AtomicFileWriter.write(file, updated);
-        return "已修改 " + file + "（唯一片段替换，" + oldSize + " 字节 → " + newSize + " 字节）";
+        return FileChange.prepare(file, snapshot, updated, "已修改");
     }
 
     private String stringArg(JsonNode args, String name) {

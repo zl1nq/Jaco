@@ -224,6 +224,13 @@ public final class ConsoleApp {
                     }
                     flushPending(renderer, pending);
                     println(ANSI_YELLOW + "⏺ " + s.tool() + ANSI_RESET + ANSI_DIM + "(" + s.summary() + ")" + ANSI_RESET);
+                } else if (event instanceof TurnEvent.ToolPreview preview) {
+                    flushPending(renderer, pending);
+                    for (String line : preview.text().split("\n")) {
+                        String color = line.startsWith("+") ? ANSI_GREEN
+                                : line.startsWith("-") ? ANSI_RED : ANSI_DIM;
+                        println(color + line + ANSI_RESET);
+                    }
                 } else if (event instanceof TurnEvent.ToolCallEnd e) {
                     // 结果预览挂一条竖轨，视觉上归属上方的 ⏺
                     String[] lines = e.summary().split("\\n");

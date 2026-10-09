@@ -21,6 +21,10 @@ public sealed interface TurnEvent {
     record ToolCallEnd(String tool, boolean ok, String summary) implements TurnEvent {
     }
 
+    /** 文件工具只读准备后的修改预览，先于权限确认和写入。 */
+    record ToolPreview(String text) implements TurnEvent {
+    }
+
     /** 需要用户确认。loop 线程阻塞在 resolver 上，TUI 用 "y"/"a"/"n" 应答。 */
     record ApprovalRequest(String tool, String detail, Consumer<String> resolver) implements TurnEvent {
     }

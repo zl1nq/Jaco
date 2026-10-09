@@ -13,7 +13,7 @@ final class AtomicFileWriter {
     private AtomicFileWriter() {
     }
 
-    static long write(Path file, String content) throws IOException {
+    static long write(Path file, String content, byte[] expected) throws IOException {
         boolean existed = Files.exists(file);
         Files.createDirectories(file.getParent());
         Path temporary = Files.createTempFile(file.getParent(), ".jaco-write-", ".tmp");
@@ -23,6 +23,7 @@ final class AtomicFileWriter {
                 Files.setPosixFilePermissions(temporary, Files.getPosixFilePermissions(file));
             }
             long newSize = Files.size(temporary);
+            checkUnchanged(file, expected);
             try {
                 Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException e) {
@@ -36,6 +37,14 @@ final class AtomicFileWriter {
                 e.addSuppressed(cleanupError);
             }
             throw e;
+        }
+    }
+
+    static void checkUnchanged(Path file, byte[] expected) throws IOException {
+        boolean exists = Files.exists(file, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        if (expected == null ? exists : !exists || !Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                || !java.util.Arrays.equals(expected, Files.readAllBytes(file))) {
+            throw new com.jaco.tool.ToolException("文件在预览后发生变化，已拒绝写入；请重新读取并生成修改: " + file);
         }
     }
 }

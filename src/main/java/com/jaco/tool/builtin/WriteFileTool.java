@@ -6,6 +6,7 @@ import com.jaco.tool.JsonSchema;
 import com.jaco.tool.Tool;
 import com.jaco.tool.ToolContext;
 import com.jaco.tool.ToolException;
+import com.jaco.tool.PreparedToolCall;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -44,6 +45,17 @@ public final class WriteFileTool implements Tool {
 
     @Override
     public String execute(JsonNode args, ToolContext ctx) throws IOException {
+        try {
+            return prepare(args, ctx).execute();
+        } catch (IOException | RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+    }
+
+    @Override
+    public PreparedToolCall prepare(JsonNode args, ToolContext ctx) throws IOException {
         if (args == null || !args.isObject()) {
             throw new ToolException("write_file 参数必须是 JSON 对象");
         }
@@ -76,11 +88,6 @@ public final class WriteFileTool implements Tool {
         if (existed && !Files.isRegularFile(file)) {
             throw new ToolException("目标不是普通文件: " + file);
         }
-        long oldSize = existed ? Files.size(file) : -1;
-        long newSize = AtomicFileWriter.write(file, content);
-        if (existed) {
-            return "已覆盖 " + file + "（" + oldSize + " 字节 → " + newSize + " 字节）";
-        }
-        return "已创建 " + file + "（" + newSize + " 字节）";
+        return FileChange.prepare(file, FileChange.snapshot(file), content, existed ? "已覆盖" : "已创建");
     }
 }
