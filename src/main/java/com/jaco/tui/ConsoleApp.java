@@ -117,12 +117,21 @@ public final class ConsoleApp {
         while (true) {
             String line;
             try {
-                printInputSeparator();
-                line = reader.readLine(ANSI_GREEN + BOLD + "  你的输入" + ANSI_RESET + "\n"
+                printInputFrameTop();
+                line = reader.readLine(ANSI_DIM + "│ " + ANSI_RESET
                         + ANSI_GREEN + BOLD + "❯ " + ANSI_RESET);
+                // 管道输入的 dumb 终端不会回显输入或换行，补齐后再画底线。
+                if (terminal.getType() != null && terminal.getType().startsWith("dumb")) {
+                    println(line);
+                }
+                printInputFrameBottom();
             } catch (UserInterruptException e) {
+                println("");
+                printInputFrameBottom();
                 continue;
             } catch (EndOfFileException e) {
+                println("");
+                printInputFrameBottom();
                 break;
             }
             line = line.strip();
@@ -140,13 +149,28 @@ public final class ConsoleApp {
         println(ANSI_DIM + "再见。" + ANSI_RESET);
     }
 
-    /** 保留最后一列，避免分隔线铺满终端时触发自动换行；每次输入重新读取宽度。 */
-    private void printInputSeparator() {
+    /** 开口边框最多 24 列，保留终端最后一列，降低历史输出在窗口缩小时的折行。 */
+    private int inputFrameWidth() {
+        int width = terminal.getWidth();
+        return Math.max(1, Math.min(24, (width > 0 ? width : 80) - 1));
+    }
+
+    private void printInputFrameTop() {
         ensureLineStart();
         println("");
-        int width = terminal.getWidth();
-        int columns = width > 0 ? width : 80;
-        println(ANSI_DIM + "─".repeat(Math.max(1, columns - 1)) + ANSI_RESET);
+        int width = inputFrameWidth();
+        String label = "╭─ 你的输入 ";
+        int labelWidth = com.jaco.render.DisplayWidth.width(label);
+        if (width >= labelWidth) {
+            println(ANSI_DIM + "╭─ " + ANSI_GREEN + BOLD + "你的输入" + ANSI_RESET
+                    + ANSI_DIM + " " + "─".repeat(width - labelWidth) + ANSI_RESET);
+        } else {
+            println(ANSI_DIM + "╭" + "─".repeat(width - 1) + ANSI_RESET);
+        }
+    }
+
+    private void printInputFrameBottom() {
+        println(ANSI_DIM + "╰" + "─".repeat(inputFrameWidth() - 1) + ANSI_RESET);
     }
 
     /** 无右边框的欢迎横幅——避免中英文混排时的宽度对齐问题。 */
