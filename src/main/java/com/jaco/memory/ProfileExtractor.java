@@ -27,7 +27,13 @@ public final class ProfileExtractor {
             绝不保存密码、API key、令牌、凭据等秘密。没有确定信息就输出空 operations。
             职业、称呼、熟悉的技术等用 category=fact；语言、回答长度、代码风格等用 preference。
             scope=global 表示通用个人信息/偏好；明确限定本项目的偏好用 project；不要输出实际路径。
-            key 用稳定的英文小写点分键，如 identity.name、identity.occupation、response.language、git.commit_style。
+            key 用稳定的英文小写点分键，优先使用以下规范：
+            称呼 identity.preferred_name，职业 identity.occupation，熟悉的技术 identity.familiar_tech；
+            回复语言 response.language，回复长短 response.length，语气 response.tone；
+            提交格式 git.commit_style，提交习惯 git.commit_behavior；
+            Java 风格 code.java.*，JavaScript 风格 code.javascript.*，TypeScript 风格 code.typescript.*，
+            通用代码风格 code.*，测试习惯 code.testing.*，文档习惯 document.*。
+            不要给条目设置重要性、常驻标记或任务标签；加载规则由程序决定。
             同类别同范围的相同概念必须复用已有 key。用户明确纠正时 set 覆盖旧值，不保留矛盾条目。
             用户明确要求忘记某项时用 delete；涉及全局及当前项目同类记录时分别删除，不能自行删除。
             evidence 必须是 current_user_message 中逐字存在的连续原文（1 至 300 字符，无控制字符）。
@@ -55,7 +61,7 @@ public final class ProfileExtractor {
         // 传入所有当前范围的键，便于识别覆盖、删除；不把证据或其他项目画像交给模型。
         var existing = store.entries().stream()
                 .filter(e -> e.scope().equals("global") || e.scope().equals(project))
-                .map(e -> Map.of("category", e.category(), "key", e.key(), "value", e.value(),
+                .map(e -> Map.of("category", e.category(), "key", ProfileContextSelector.canonicalKey(e.key()), "value", e.value(),
                         "scope", e.scope().equals("global") ? "global" : "project")).toList();
         String input = MAPPER.writeValueAsString(Map.of("current_user_message", prompt,
                 "previous_assistant", previousAssistant, "existing_profile", existing));

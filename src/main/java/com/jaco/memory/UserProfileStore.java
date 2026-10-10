@@ -9,9 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** 独立于会话的有界用户画像。只有原子落盘成功后才更新内存状态。 */
@@ -56,32 +55,12 @@ public final class UserProfileStore {
         return workspace.toRealPath().toString();
     }
 
-    /** 同类别同键的项目值覆盖全局值；不加载其他项目的记录。 */
-    public synchronized String context(String project) throws IOException {
+    /** 按固定白名单和本轮任务选择画像；项目值覆盖全局值。 */
+    public synchronized String context(String project, Set<ProfileContextSelector.Topic> topics) throws IOException {
         if (!profile.enabled()) {
             return "";
         }
-        Map<String, ProfileEntry> selected = new LinkedHashMap<>();
-        for (String scope : List.of("global", project)) {
-            for (ProfileEntry entry : profile.entries()) {
-                if (scope.equals(entry.scope())) {
-                    selected.put(entry.category() + ":" + entry.key(), entry);
-                }
-            }
-        }
-        // 整条截取，避免生成破损 JSON；最近更新的条目优先进入有限上下文。
-        List<Map<String, String>> bounded = new ArrayList<>();
-        var data = selected.values().stream().sorted((a, b) -> Long.compare(b.updatedAt(), a.updatedAt()))
-                .map(e -> Map.of("id", e.id(), "category", e.category(), "key", e.key(),
-                        "value", e.value(), "scope", e.scope())).toList();
-        for (var item : data) {
-            bounded.add(item);
-            if (MAPPER.writeValueAsString(bounded).length() > 12_000) {
-                bounded.remove(bounded.size() - 1);
-                break;
-            }
-        }
-        return bounded.isEmpty() ? "" : MAPPER.writeValueAsString(bounded);
+        return ProfileContextSelector.select(profile.entries(), project, topics);
     }
 
     public synchronized void setEnabled(boolean enabled) throws IOException {
@@ -118,7 +97,7 @@ public final class UserProfileStore {
         for (JsonNode op : root.path("operations")) {
             String action = text(op, "action", 10);
             String category = text(op, "category", 16);
-            String key = text(op, "key", 64);
+            String key = ProfileContextSelector.canonicalKey(text(op, "key", 64));
             String scope = text(op, "scope", 10);
             String evidence = text(op, "evidence", 300);
             if (!List.of("fact", "preference").contains(category)
@@ -127,20 +106,22 @@ public final class UserProfileStore {
                 throw new IOException("记忆操作或用户原文证据无效");
             }
             String targetScope = scope.equals("global") ? "global" : project;
-            ProfileEntry previous = next.stream().filter(e -> e.category().equals(category)
-                    && e.key().equals(key) && e.scope().equals(targetScope)).findFirst().orElse(null);
+            var matching = next.stream().filter(e -> e.category().equals(category)
+                    && ProfileContextSelector.canonicalKey(e.key()).equals(key) && e.scope().equals(targetScope)).toList();
+            ProfileEntry previous = matching.stream().max(java.util.Comparator.comparingLong(ProfileEntry::updatedAt))
+                    .orElse(null);
             if (action.equals("delete")) {
                 if (previous != null) {
-                    next.remove(previous);
+                    next.removeAll(matching);
                     changes.add("已忘记 " + previous.key());
                 }
             } else if (action.equals("set")) {
                 String value = text(op, "value", 240);
-                if (previous != null && previous.value().equals(value)) {
+                if (previous != null && matching.size() == 1 && previous.key().equals(key) && previous.value().equals(value)) {
                     continue;
                 }
                 if (previous != null) {
-                    next.remove(previous);
+                    next.removeAll(matching);
                 }
                 next.add(new ProfileEntry(previous == null ? UUID.randomUUID().toString() : previous.id(),
                         category, key, value, targetScope, session, evidence,

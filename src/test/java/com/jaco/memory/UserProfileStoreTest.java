@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -60,11 +61,11 @@ class UserProfileStoreTest {
         store.apply(operation("set", "preference", "response.language", "中文", "global", "中文"), "中文", "s", a);
         store.apply(operation("set", "preference", "response.language", "英文", "project", "英文"), "英文", "s", a);
         store.apply(operation("set", "fact", "identity.role", "项目B管理员", "project", "管理员"), "管理员", "s", b);
-        String context = store.context(a);
+        String context = store.context(a, Set.of());
         assertTrue(context.contains("英文"));
         assertFalse(context.contains("中文"));
         assertFalse(context.contains("项目B管理员"));
-        assertTrue(store.context(tmp.toString()).contains("中文"));
+        assertTrue(store.context(tmp.toString(), Set.of()).contains("中文"));
     }
 
     @Test void disablingPersistsAndPreventsExtractionAndInjectionWithoutDeletingEntries() throws Exception {
@@ -74,11 +75,11 @@ class UserProfileStoreTest {
         store.setEnabled(false);
         UserProfileStore reloaded = store();
         assertFalse(reloaded.enabled());
-        assertEquals("", reloaded.context(tmp.toString()));
+        assertEquals("", reloaded.context(tmp.toString(), Set.of()));
         assertEquals(1, reloaded.entries().size());
         assertTrue(reloaded.apply("invalid", "", "s", tmp.toString()).isEmpty());
         reloaded.setEnabled(true);
-        assertTrue(store().context(tmp.toString()).contains("小张"));
+        assertTrue(store().context(tmp.toString(), Set.of()).contains("小张"));
     }
 
     @Test void automaticDeleteAndManualForgetAndClearPersist() throws Exception {
@@ -148,15 +149,18 @@ class UserProfileStoreTest {
         assertTrue(store().entries().stream().anyMatch(e -> e.key().equals("test.k0") && e.value().equals("新值")));
     }
 
-    @Test void contextIsBoundedAndContainsOnlyCompleteJsonEntries() throws Exception {
+    @Test void contextIsBoundedAndContainsOnlyCompleteValues() throws Exception {
         UserProfileStore store = store();
         String value = "长".repeat(240);
         for (int i = 0; i < 64; i++) {
-            store.apply(operation("set", "fact", "test.k" + i, value, "global", "长"), "长", "s", tmp.toString());
+            store.apply(operation("set", "preference", "code.style" + i, value, "global", "长"), "长", "s", tmp.toString());
         }
-        String context = store.context(tmp.toString());
-        assertTrue(context.length() <= 12_000);
-        assertTrue(MAPPER.readTree(context).isArray());
+        String context = store.context(tmp.toString(), Set.of(ProfileContextSelector.Topic.CODING));
+        assertTrue(context.length() <= 2000);
+        assertFalse(context.isEmpty());
+        for (String line : context.split("\n")) {
+            assertEquals(value, MAPPER.readTree(line.substring(line.indexOf(':') + 1)).asText());
+        }
         assertFalse(context.contains("evidence"));
     }
 
@@ -169,5 +173,23 @@ class UserProfileStoreTest {
         assertThrows(IOException.class, () -> store.apply(
                 operation("set", "fact", "identity.name", "小张", "global", "小张"), "小张", "s", tmp.toString()));
         assertTrue(store.entries().isEmpty());
+    }
+
+    @Test void canonicalUpdateConsolidatesLegacyAliasesAndKeepsExistingId() throws Exception {
+        ProfileEntry legacy = new ProfileEntry("legacy-id", "preference", "reply.language", "中文",
+                "global", "s1", "默认中文", 1, 2);
+        Files.writeString(tmp.resolve("user-profile.json"), MAPPER.writeValueAsString(
+                new UserProfileStore.Profile(true, List.of(legacy))));
+        UserProfileStore store = store();
+        assertTrue(store.context(tmp.toString(), Set.of()).contains("response.language"));
+        store.apply(operation("set", "preference", "response.language", "英文", "global", "英文"),
+                "英文", "s2", tmp.toString());
+        assertEquals(1, store().entries().size());
+        assertEquals("legacy-id", store().entries().get(0).id());
+        assertEquals("response.language", store().entries().get(0).key());
+        assertEquals("英文", store().entries().get(0).value());
+        store.apply(operation("delete", "preference", "reply.language", "", "global", "忘记"),
+                "忘记", "s3", tmp.toString());
+        assertTrue(store().entries().isEmpty());
     }
 }

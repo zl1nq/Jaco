@@ -7,6 +7,7 @@ import com.jaco.hook.HookChain;
 import com.jaco.llm.ChatRequest;
 import com.jaco.llm.ChatStream;
 import com.jaco.llm.OpenAiCompatClient;
+import com.jaco.llm.Message;
 import com.jaco.llm.StreamChunk;
 import com.jaco.llm.TestStreams;
 import com.jaco.llm.Usage;
@@ -24,6 +25,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -88,6 +90,67 @@ class AgentRunnerUserProfileTest {
 
     private static TurnEvent.Done done(List<TurnEvent> events) {
         return (TurnEvent.Done) events.get(events.size() - 1);
+    }
+
+    private void addPreference(UserProfileStore store, String key, String value) throws Exception {
+        String json = MAPPER.writeValueAsString(Map.of("operations", List.of(Map.of(
+                "action", "set", "category", "preference", "key", key,
+                "value", value, "scope", "global", "evidence", "明确表达"))));
+        store.apply(json, "明确表达", "source", UserProfileStore.projectScope(tmp));
+    }
+
+    private static String latestChatSystem(FakeClient client) {
+        return client.requests.stream().filter(r -> !isExtraction(r)).toList().getLast().messages().get(0).content();
+    }
+
+    @Test void routesRawPromptAndContinuationWithoutAddingRequestsAndResetsForNewTask() throws Exception {
+        UserProfileStore profile = profile();
+        addPreference(profile, "response.language", "中文");
+        addPreference(profile, "git.commit_style", "中文提交习惯");
+        addPreference(profile, "code.java.style", "Java专属风格");
+        addPreference(profile, "document.format", "文档专属格式");
+        FakeClient client = new FakeClient();
+        client.extraction = "{\"operations\":[]}";
+        AgentRunner agent = runner(client, profile, new AgentHook() {
+            @Override public String onUserPromptSubmit(String prompt) { return "hook 改写为修改 README"; }
+        });
+        turn(agent, "提交代码");
+        assertTrue(latestChatSystem(client).contains("中文提交习惯"));
+        assertFalse(latestChatSystem(client).contains("文档专属格式"));
+        turn(agent, "继续");
+        assertTrue(latestChatSystem(client).contains("中文提交习惯"));
+        turn(agent, "修改Java代码");
+        assertTrue(latestChatSystem(client).contains("Java专属风格"));
+        assertFalse(latestChatSystem(client).contains("中文提交习惯"));
+        turn(agent, "你好");
+        assertFalse(latestChatSystem(client).contains("Java专属风格"));
+        assertTrue(latestChatSystem(client).contains("中文"));
+        assertEquals(8, client.requests.size()); // 每轮仅原有的聊天与提取请求
+    }
+
+    @Test void switchingAndRestartRestoreOnlyTargetSessionTaskAndNewSessionClearsIt() throws Exception {
+        UserProfileStore profile = profile();
+        addPreference(profile, "git.commit_style", "提交格式");
+        addPreference(profile, "code.java.style", "Java专属风格");
+        SessionStore sessions = new SessionStore(tmp.resolve("sessions"));
+        sessions.save(new Session("s20990101-000000", 10,
+                List.of(Message.user("修改Java代码"), Message.assistant("完成"), Message.user("继续"))));
+        sessions.save(new Session("s20000101-000000", 1,
+                List.of(Message.user("提交代码"), Message.assistant("完成"))));
+        FakeClient client = new FakeClient();
+        client.extraction = "{\"operations\":[]}";
+        AgentRunner agent = runner(client, profile);
+        turn(agent, "继续");
+        assertTrue(latestChatSystem(client).contains("Java专属风格"));
+        assertFalse(latestChatSystem(client).contains("提交格式"));
+        assertNull(agent.switchSession("s20000101-000000"));
+        turn(agent, "继续");
+        assertTrue(latestChatSystem(client).contains("提交格式"));
+        assertFalse(latestChatSystem(client).contains("Java专属风格"));
+        agent.newSession();
+        turn(agent, "继续");
+        assertFalse(latestChatSystem(client).contains("提交格式"));
+        assertFalse(latestChatSystem(client).contains("Java专属风格"));
     }
 
     @Test void learnsFromRawPromptAndReusesProfileInNewSessionAndAfterRestart() throws Exception {
