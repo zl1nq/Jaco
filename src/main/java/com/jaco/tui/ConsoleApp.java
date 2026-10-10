@@ -57,6 +57,7 @@ public final class ConsoleApp {
             return true;
         }));
         commands.put("new", new Command.Simple("new", "开新会话（清空上下文与权限放行记录）", args -> {
+            if (!flushProfile()) return true;
             agent.newSession();
             println(ANSI_DIM + "已开始新会话 " + agent.session().id() + ANSI_RESET);
             return true;
@@ -71,6 +72,7 @@ public final class ConsoleApp {
                 println(ANSI_YELLOW + "用法: /switch <会话id>，/sessions 查看" + ANSI_RESET);
                 return true;
             }
+            if (agent.profileFlushBeforeSwitch(id) && !flushProfile()) return true;
             String error = agent.switchSession(id);
             if (error != null) {
                 println(ANSI_YELLOW + error + ANSI_RESET);
@@ -160,6 +162,7 @@ public final class ConsoleApp {
             }
             runTurn(line);
         }
+        flushProfile();
         println(ANSI_DIM + "再见。" + ANSI_RESET);
     }
 
@@ -217,8 +220,15 @@ public final class ConsoleApp {
     // ---- 一轮对话：消费 agent loop 的事件流 ----
 
     private void runTurn(String prompt) {
+        consumeTurn(agent.runTurn(prompt));
+    }
+
+    private boolean flushProfile() {
+        return !agent.hasPendingUserProfile() || consumeTurn(agent.flushUserProfile());
+    }
+
+    private boolean consumeTurn(TurnHandle handle) {
         long start = System.currentTimeMillis();
-        TurnHandle handle = agent.runTurn(prompt);
         Spinner spinner = new Spinner(terminal);
         MarkdownRenderer renderer = new MarkdownRenderer();
         StringBuilder pending = new StringBuilder();
@@ -336,6 +346,7 @@ public final class ConsoleApp {
         }
         String mark = !aborted && !interrupted && error == null ? ANSI_GREEN + "✓" : ANSI_DIM + "·";
         println(mark + ANSI_RESET + ANSI_DIM + statusSuffix(usage, finishReason, iterations) + ANSI_RESET);
+        return !interrupted && error == null;
     }
 
     private String askApproval(TurnEvent.ApprovalRequest request) {

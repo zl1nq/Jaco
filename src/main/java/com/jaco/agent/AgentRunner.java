@@ -18,6 +18,7 @@ import com.jaco.session.SessionStore;
 import com.jaco.memory.UserProfileStore;
 import com.jaco.memory.ProfileExtractor;
 import com.jaco.memory.ProfileContextSelector;
+import com.jaco.memory.ProfileExtractionPolicy;
 import com.jaco.tool.ToolContext;
 import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
@@ -75,6 +76,7 @@ public final class AgentRunner {
     private UserProfileStore userProfile;
     private String profileProject;
     private Set<ProfileContextSelector.Topic> profileTopics = Set.of();
+    private long profileRetryAfter;
 
     /** 主程序显式绑定画像存储；独立测试/嵌入式调用可不启用。 */
     public void bindUserProfile(UserProfileStore store) throws IOException {
@@ -92,6 +94,7 @@ public final class AgentRunner {
             if (command.isEmpty()) {
                 StringBuilder text = new StringBuilder("用户画像：自动记忆")
                         .append(userProfile.enabled() ? "已开启" : "已关闭");
+                text.append("，当前项目待处理 ").append(userProfile.pendingCount(profileProject)).append(" 条消息");
                 for (var entry : userProfile.entries()) {
                     text.append("\n").append(entry.id()).append(" [")
                             .append(entry.scope().equals("global") ? "全局" : entry.scope())
@@ -105,6 +108,7 @@ public final class AgentRunner {
             }
             if (command.equals("on") || command.equals("off")) {
                 userProfile.setEnabled(command.equals("on"));
+                if (command.equals("off")) profileRetryAfter = 0;
                 return command.equals("on") ? "已开启自动记忆与画像加载" : "已关闭自动记忆与画像加载，已有记录保留";
             }
             if (command.equals("clear")) {
@@ -112,10 +116,13 @@ public final class AgentRunner {
                     return "已取消清空";
                 }
                 userProfile.clear();
+                profileRetryAfter = 0;
                 return "已清空用户画像";
             }
             if (command.startsWith("forget ")) {
-                return userProfile.forget(command.substring(7).strip()) ? "已删除画像条目" : "没有匹配的画像条目 ID";
+                boolean forgotten = userProfile.forget(command.substring(7).strip());
+                if (forgotten) profileRetryAfter = 0;
+                return forgotten ? "已删除画像条目" : "没有匹配的画像条目 ID";
             }
             return "用法: /memory [forget <ID> | clear | off | on]";
         } catch (IOException e) {
@@ -204,6 +211,71 @@ public final class AgentRunner {
             return "前缀不唯一（匹配 " + matched.size() + " 个），请加长: " + idOrPrefix;
         }
         return adopt(matched.get(0));
+    }
+
+    /** TUI 在有效的会话切换前补处理；失败切换和切换当前会话不触发额外调用。 */
+    public boolean profileFlushBeforeSwitch(String idOrPrefix) {
+        Optional<Session> exact = idOrPrefix.matches("[A-Za-z0-9._-]+") ? sessions.load(idOrPrefix) : Optional.empty();
+        if (exact.isPresent()) return !exact.get().id().equals(session.id());
+        var matched = sessions.listSessions().stream().filter(s -> s.id().startsWith(idOrPrefix)).toList();
+        return matched.size() == 1 && !matched.get(0).id().equals(session.id());
+    }
+
+    public boolean hasPendingUserProfile() {
+        return userProfile != null && userProfile.enabled() && userProfile.retryReady()
+                && System.currentTimeMillis() >= profileRetryAfter
+                && userProfile.pendingCount(profileProject) > 0;
+    }
+
+    /** 边界补处理沿用 TurnHandle，允许终端在等待时用 Ctrl+C 取消。 */
+    public TurnHandle flushUserProfile() {
+        TurnHandle handle = new TurnHandle();
+        Thread thread = new Thread(() -> {
+            TurnEventSink.install(handle);
+            try {
+                Usage usage = processPendingProfile(handle, true);
+                handle.emit(new TurnEvent.Done(usage, "stop", handle.isCancelled(), false, null, 0));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (Exception e) {
+                handle.emit(new TurnEvent.Done(null, null, handle.isCancelled(), false, e, 0));
+            } finally {
+                TurnEventSink.clear();
+            }
+        }, "jaco-profile");
+        handle.setLoopThread(thread);
+        thread.start();
+        return handle;
+    }
+
+    private Usage processPendingProfile(TurnHandle handle, boolean drain) throws InterruptedException {
+        Usage usage = null;
+        while (!handle.isCancelled() && hasPendingUserProfile()) {
+            var batch = userProfile.pendingBatch(profileProject);
+            handle.emit(new TurnEvent.Notice("正在提取用户画像（" + batch.size() + " 条消息）…"));
+            try {
+                var extracted = ProfileExtractor.extract(client, provider, userProfile, profileProject, batch,
+                        handle::isCancelled, handle::setCurrentStream, hooks::onBeforeRequest);
+                if (extracted.usage() != null) usage = usage == null ? extracted.usage() : mergeUsage(usage, extracted.usage());
+                for (String change : extracted.changes()) handle.emit(new TurnEvent.Notice(change));
+            } catch (InterruptedException e) {
+                throw e;
+            } catch (Exception e) {
+                if (!handle.isCancelled()) {
+                    profileRetryAfter = System.currentTimeMillis() + 60_000;
+                    try {
+                        userProfile.markExtractionFailed();
+                    } catch (IOException writeError) {
+                        log.warn("画像重试状态保存失败（{}）", writeError.getClass().getSimpleName());
+                    }
+                    handle.emit(new TurnEvent.Notice("用户画像未更新，待处理消息保留；60 秒内不自动重试"));
+                    log.warn("用户画像提取失败（{}）", e.getClass().getSimpleName());
+                }
+                break;
+            }
+            if (!drain) break;
+        }
+        return usage;
     }
 
     private String adopt(Session target) {
@@ -400,22 +472,18 @@ public final class AgentRunner {
             sessions.save(session);
             if (userProfile != null && userProfile.enabled() && !interrupted && error == null
                     && "stop".equals(finishReason)) {
-                handle.emit(new TurnEvent.Notice("正在更新用户画像…"));
                 try {
-                    var extracted = ProfileExtractor.extract(client, provider, userProfile, profileProject,
-                            session.id(), prompt, previousAssistant, handle::isCancelled,
-                            handle::setCurrentStream, hooks::onBeforeRequest);
-                    if (extracted.usage() != null) {
-                        totalUsage = totalUsage == null ? extracted.usage() : mergeUsage(totalUsage, extracted.usage());
-                    }
-                    for (String change : extracted.changes()) {
-                        handle.emit(new TurnEvent.Notice(change));
+                    userProfile.enqueue(prompt, previousAssistant, session.id(), profileProject);
+                    boolean immediate = ProfileExtractionPolicy.immediate(prompt);
+                    if (immediate || userProfile.pendingCount(profileProject) >= UserProfileStore.BATCH_SIZE) {
+                        Usage extracted = processPendingProfile(handle, immediate);
+                        if (extracted != null) totalUsage = totalUsage == null ? extracted : mergeUsage(totalUsage, extracted);
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     interrupted = true;
                 } catch (Exception e) {
-                    handle.emit(new TurnEvent.Notice("本轮用户画像未更新，原记录保留；可用 /memory 检查或删除条目"));
+                    handle.emit(new TurnEvent.Notice("本轮画像消息未入队，原记录保留：" + e.getMessage()));
                     log.warn("用户画像提取失败（{}）", e.getClass().getSimpleName());
                 }
                 interrupted = interrupted || handle.isCancelled();

@@ -49,7 +49,19 @@ class AgentRunnerUserProfileTest {
             requests.add(request);
             if (isExtraction(request)) {
                 if (failExtraction) throw new IOException("提取失败");
-                return TestStreams.of(new StreamChunk.Delta(extraction),
+                var result = MAPPER.readTree(extraction);
+                var messages = MAPPER.readTree(request.messages().get(1).content()).path("messages");
+                for (var operation : result.path("operations")) {
+                    if (operation.has("message_id")) continue;
+                    String id = messages.get(0).path("message_id").asText();
+                    for (var message : messages) {
+                        if (message.path("user_message").asText().contains(operation.path("evidence").asText())) {
+                            id = message.path("message_id").asText();
+                        }
+                    }
+                    ((com.fasterxml.jackson.databind.node.ObjectNode) operation).put("message_id", id);
+                }
+                return TestStreams.of(new StreamChunk.Delta(result.toString()),
                         new StreamChunk.Done("stop", new Usage(5, 2, 7)));
             }
             if (failChat) throw new IOException("聊天失败");
@@ -77,8 +89,11 @@ class AgentRunnerUserProfileTest {
     }
 
     private static List<TurnEvent> turn(AgentRunner agent, String prompt) {
+        return await(agent.runTurn(prompt));
+    }
+
+    private static List<TurnEvent> await(TurnHandle handle) {
         return assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
-            TurnHandle handle = agent.runTurn(prompt);
             List<TurnEvent> events = new ArrayList<>();
             while (true) {
                 TurnEvent event = handle.poll(100);
@@ -125,7 +140,7 @@ class AgentRunnerUserProfileTest {
         turn(agent, "你好");
         assertFalse(latestChatSystem(client).contains("Java专属风格"));
         assertTrue(latestChatSystem(client).contains("中文"));
-        assertEquals(8, client.requests.size()); // 每轮仅原有的聊天与提取请求
+        assertEquals(4, client.requests.size()); // 普通任务和纯承接语都没有额外提取调用
     }
 
     @Test void switchingAndRestartRestoreOnlyTargetSessionTaskAndNewSessionClearsIt() throws Exception {
@@ -169,7 +184,7 @@ class AgentRunnerUserProfileTest {
         ChatRequest extraction = client.requests.get(1);
         assertNull(extraction.tools());
         assertEquals("以后默认用中文回答", MAPPER.readTree(extraction.messages().get(1).content())
-                .path("current_user_message").asText());
+                .path("messages").get(0).path("user_message").asText());
 
         // 固定旧 ID 避开既有的同秒新会话 ID 问题，证明新会话消息列表为空。
         new SessionStore(tmp.resolve("sessions")).save(Session.create("s20000101-000000", 1));
@@ -193,15 +208,17 @@ class AgentRunnerUserProfileTest {
         UserProfileStore profile = profile();
         AgentRunner agent = runner(client, profile);
         turn(agent, "以后默认用中文回答");
-        byte[] saved = Files.readAllBytes(tmp.resolve("user-profile.json"));
+        var saved = profile.entries();
         // 输出虽然有完整结构，但证据来自旧消息，本轮不能采纳。
-        var invalid = turn(agent, "今天帮我看一下文件");
+        var invalid = turn(agent, "我喜欢简洁回答");
         assertNull(done(invalid).error());
         assertTrue(invalid.stream().anyMatch(e -> e instanceof TurnEvent.Notice n && n.text().contains("未更新")));
-        assertArrayEquals(saved, Files.readAllBytes(tmp.resolve("user-profile.json")));
+        assertEquals(saved, profile.entries());
+        assertEquals(1, profile.pendingCount(UserProfileStore.projectScope(tmp)));
         client.failExtraction = true;
         assertNull(done(turn(agent, "继续")).error());
-        assertArrayEquals(saved, Files.readAllBytes(tmp.resolve("user-profile.json")));
+        assertEquals(saved, profile.entries());
+        assertFalse(profile.retryReady());
     }
 
     @Test void disabledMemorySkipsExtraCallAndInjectionAndManagementPersists() throws Exception {
@@ -246,10 +263,10 @@ class AgentRunnerUserProfileTest {
         AgentRunner agent = runner(client, profile());
         client.extraction = "{\"operations\":[]}";
         turn(agent, "我在引用别人说：我是医生");
-        turn(agent, "这次详细解释");
+        turn(agent, "以后默认用中文回答");
         var input = MAPPER.readTree(client.requests.get(3).messages().get(1).content());
-        assertEquals("这次详细解释", input.path("current_user_message").asText());
-        assertEquals("已完成", input.path("previous_assistant").asText());
+        assertEquals("以后默认用中文回答", input.path("messages").get(0).path("user_message").asText());
+        assertEquals("已完成", input.path("messages").get(0).path("previous_assistant").asText());
         assertFalse(input.toString().contains("我是医生"));
         assertTrue(profile().entries().isEmpty());
     }
@@ -275,7 +292,8 @@ class AgentRunnerUserProfileTest {
             while (!stalled.isCancelled()) Thread.sleep(10);
         });
         assertTrue(profile.entries().isEmpty());
-        assertFalse(Files.exists(tmp.resolve("user-profile.json")));
+        assertTrue(profile().entries().isEmpty());
+        assertEquals(1, profile().pendingCount(UserProfileStore.projectScope(tmp)));
     }
 
     @Test void truncatedExtractionIsNotApplied() throws Exception {
@@ -289,5 +307,107 @@ class AgentRunnerUserProfileTest {
         UserProfileStore profile = profile();
         assertNull(done(turn(runner(client, profile), "以后默认用中文回答")).error());
         assertTrue(profile.entries().isEmpty());
+    }
+
+    @Test void twentyOrdinaryTurnsNeedOnlyTwoExtraCallsAndConfirmationsDoNotCount() throws Exception {
+        FakeClient client = new FakeClient();
+        client.extraction = "{\"operations\":[]}";
+        UserProfileStore profile = profile();
+        AgentRunner agent = runner(client, profile);
+        for (int i = 0; i < 9; i++) turn(agent, "解释第 " + i + " 个问题");
+        assertEquals(9, client.requests.size());
+        for (String confirmation : List.of("继续", "好的", "ok", "谢谢")) turn(agent, confirmation);
+        assertEquals(9, profile.pendingCount(UserProfileStore.projectScope(tmp)));
+        assertEquals(13, client.requests.size());
+        turn(agent, "解释第 9 个问题");
+        assertEquals(15, client.requests.size());
+        assertEquals(0, profile.pendingCount(UserProfileStore.projectScope(tmp)));
+        for (int i = 10; i < 20; i++) turn(agent, "解释第 " + i + " 个问题");
+        assertEquals(2, client.requests.stream().filter(AgentRunnerUserProfileTest::isExtraction).count());
+        assertEquals(0, profile().pendingCount(UserProfileStore.projectScope(tmp)));
+        var extraction = client.requests.stream().filter(AgentRunnerUserProfileTest::isExtraction).toList().get(0);
+        assertEquals(10, MAPPER.readTree(extraction.messages().get(1).content()).path("messages").size());
+    }
+
+    @Test void explicitPreferenceImmediatelyProcessesEarlierMessagesWithCorrectEvidenceSource() throws Exception {
+        FakeClient client = new FakeClient();
+        UserProfileStore profile = profile();
+        AgentRunner agent = runner(client, profile);
+        for (int i = 0; i < 4; i++) turn(agent, "解释第 " + i + " 个问题");
+        String session = agent.session().id();
+        assertNull(done(turn(agent, "以后默认用中文回答")).error());
+        assertEquals(6, client.requests.size());
+        assertEquals(1, profile.entries().size());
+        assertEquals("以后默认用中文回答", profile.entries().get(0).evidence());
+        assertEquals(session, profile.entries().get(0).sourceSession());
+        assertEquals(0, profile.pendingCount(UserProfileStore.projectScope(tmp)));
+    }
+
+    @Test void recoveredQueueCanFlushAtBoundaryAndSuccessfulBatchIsNotReplayed() throws Exception {
+        FakeClient initial = new FakeClient();
+        initial.extraction = "{\"operations\":[]}";
+        UserProfileStore profile = profile();
+        AgentRunner agent = runner(initial, profile);
+        turn(agent, "解释一下迭代器");
+        turn(agent, "再解释一下生成器");
+        assertEquals(2, initial.requests.size());
+        FakeClient restarted = new FakeClient();
+        restarted.extraction = "{\"operations\":[]}";
+        UserProfileStore loaded = profile();
+        AgentRunner recovered = runner(restarted, loaded);
+        assertTrue(recovered.hasPendingUserProfile());
+        assertNull(done(await(recovered.flushUserProfile())).error());
+        assertEquals(1, restarted.requests.size());
+        assertEquals(2, MAPPER.readTree(restarted.requests.get(0).messages().get(1).content()).path("messages").size());
+        assertFalse(recovered.hasPendingUserProfile());
+        await(recovered.flushUserProfile());
+        assertEquals(1, restarted.requests.size());
+        assertEquals(0, profile().pendingCount(UserProfileStore.projectScope(tmp)));
+    }
+
+    @Test void failedBatchIsRetainedAndNotRetriedEveryTurnOrAtExitDuringCooldown() throws Exception {
+        FakeClient client = new FakeClient();
+        client.failExtraction = true;
+        UserProfileStore profile = profile();
+        AgentRunner agent = runner(client, profile);
+        for (int i = 0; i < 10; i++) assertNull(done(turn(agent, "解释第 " + i + " 个问题")).error());
+        assertEquals(11, client.requests.size());
+        assertEquals(10, profile.pendingCount(UserProfileStore.projectScope(tmp)));
+        assertFalse(profile().retryReady());
+        for (int i = 10; i < 13; i++) turn(agent, "解释第 " + i + " 个问题");
+        turn(agent, "以后默认用中文回答");
+        await(agent.flushUserProfile());
+        assertEquals(15, client.requests.size());
+        assertEquals(14, profile().pendingCount(UserProfileStore.projectScope(tmp)));
+        assertTrue(profile.entries().isEmpty());
+    }
+
+    @Test void manualOffAndClearDiscardCandidatesAndNeverReplayOldMessages() throws Exception {
+        FakeClient client = new FakeClient();
+        client.extraction = "{\"operations\":[]}";
+        UserProfileStore profile = profile();
+        AgentRunner agent = runner(client, profile);
+        turn(agent, "解释一下代码");
+        assertEquals(1, profile.pendingCount(UserProfileStore.projectScope(tmp)));
+        agent.memoryCommand("off", () -> false);
+        assertEquals(0, profile().pendingCount(UserProfileStore.projectScope(tmp)));
+        agent.memoryCommand("on", () -> false);
+        await(agent.flushUserProfile());
+        assertEquals(1, client.requests.size());
+        turn(agent, "解释一下递归");
+        agent.memoryCommand("clear", () -> true);
+        assertEquals(0, profile().pendingCount(UserProfileStore.projectScope(tmp)));
+        await(agent.flushUserProfile());
+        assertEquals(2, client.requests.size());
+    }
+
+    @Test void invalidSwitchDoesNotRequestBoundaryFlushButValidDifferentSessionDoes() throws Exception {
+        FakeClient client = new FakeClient();
+        AgentRunner agent = runner(client, profile());
+        new SessionStore(tmp.resolve("sessions")).save(Session.create("s20000101-000000", 1));
+        assertFalse(agent.profileFlushBeforeSwitch("missing"));
+        assertFalse(agent.profileFlushBeforeSwitch(agent.session().id()));
+        assertTrue(agent.profileFlushBeforeSwitch("s20000101"));
+        assertTrue(client.requests.isEmpty());
     }
 }
