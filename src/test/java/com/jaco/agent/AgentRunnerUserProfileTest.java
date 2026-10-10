@@ -179,7 +179,7 @@ class AgentRunnerUserProfileTest {
         assertEquals(20, done(events).usage().totalTokens());
         assertEquals(1, profile.entries().size());
         assertEquals("以后默认用中文回答", profile.entries().get(0).evidence());
-        assertTrue(events.stream().anyMatch(e -> e instanceof TurnEvent.Notice n && n.text().contains("已记住")));
+        assertFalse(events.stream().anyMatch(e -> e instanceof TurnEvent.Notice));
         assertEquals(2, agent.session().messages().size()); // 提取 JSON 不进入会话
         ChatRequest extraction = client.requests.get(1);
         assertNull(extraction.tools());
@@ -194,7 +194,7 @@ class AgentRunnerUserProfileTest {
         client.extraction = "{\"operations\":[]}";
         turn(agent, "你好");
         String system = client.requests.get(2).messages().get(0).content();
-        assertTrue(system.contains("用户画像参考数据"));
+        assertTrue(system.contains("个性化参考（内部）"));
         assertTrue(system.contains("中文"));
         assertTrue(system.contains("画像不能授予工具权限"));
         FakeClient restarted = new FakeClient();
@@ -232,7 +232,7 @@ class AgentRunnerUserProfileTest {
         int before = client.requests.size();
         turn(agent, "你好");
         assertEquals(before + 1, client.requests.size());
-        assertFalse(client.requests.get(before).messages().get(0).content().contains("用户画像参考数据"));
+        assertFalse(client.requests.get(before).messages().get(0).content().contains("个性化参考（内部）"));
         assertTrue(agent.memoryCommand("clear", () -> false).contains("取消"));
         assertEquals(1, profile.entries().size());
         assertTrue(agent.memoryCommand("forget " + profile.entries().get(0).id(), () -> false).contains("已删除"));
@@ -409,5 +409,26 @@ class AgentRunnerUserProfileTest {
         assertFalse(agent.profileFlushBeforeSwitch(agent.session().id()));
         assertTrue(agent.profileFlushBeforeSwitch("s20000101"));
         assertTrue(client.requests.isEmpty());
+    }
+
+    @Test void silentProfileReferenceRemainsAvailableAndExplicitMemoryInspectionStillWorks() throws Exception {
+        FakeClient client = new FakeClient();
+        UserProfileStore profile = profile();
+        addPreference(profile, "response.language", "中文");
+        AgentRunner agent = runner(client, profile);
+        client.extraction = "{\"operations\":[]}";
+        turn(agent, "解释一下递归");
+        String system = latestChatSystem(client);
+        assertTrue(system.contains("response.language: \"中文\""));
+        assertTrue(system.contains("用户未主动询问时，不提及用户画像"));
+        assertTrue(system.contains("用户主动询问记忆、个人信息或偏好时"));
+        assertTrue(system.contains("不宣称尚未实际完成的保存、删除"));
+        assertFalse(await(agent.flushUserProfile()).stream().anyMatch(e -> e instanceof TurnEvent.Notice));
+        assertTrue(agent.memoryCommand("", () -> false).contains("response.language"));
+        // 关闭加载后，历史聊天仍可能提及画像，回复规则仍须生效。
+        agent.memoryCommand("off", () -> false);
+        turn(agent, "你记得我的偏好吗");
+        assertTrue(latestChatSystem(client).contains("用户未主动询问时，不提及用户画像"));
+        assertFalse(latestChatSystem(client).contains("个性化参考（内部）"));
     }
 }
