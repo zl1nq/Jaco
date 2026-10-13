@@ -46,6 +46,9 @@ class AgentRunnerUserProfileTest {
         int extractionFailuresRemaining;
         boolean failChat;
         FakeClient() { super("http://localhost", "k"); }
+        @Override public ChatStream chatStream(ChatRequest request, long deadlineNanos) throws IOException {
+            return chatStream(request);
+        }
         @Override public ChatStream chatStream(ChatRequest request) throws IOException {
             requests.add(request);
             if (isExtraction(request)) {
@@ -279,6 +282,9 @@ class AgentRunnerUserProfileTest {
         CountDownLatch extracting = new CountDownLatch(1);
         ChatStream stalled = TestStreams.of(new StreamChunk.Delta(SET_CHINESE));
         OpenAiCompatClient client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request, long deadlineNanos) {
+                return chatStream(request);
+            }
             @Override public ChatStream chatStream(ChatRequest request) {
                 if (isExtraction(request)) {
                     extracting.countDown();
@@ -302,6 +308,9 @@ class AgentRunnerUserProfileTest {
 
     @Test void truncatedExtractionIsNotApplied() throws Exception {
         OpenAiCompatClient client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request, long deadlineNanos) {
+                return chatStream(request);
+            }
             @Override public ChatStream chatStream(ChatRequest request) {
                 return isExtraction(request)
                         ? TestStreams.of(new StreamChunk.Delta(SET_CHINESE), new StreamChunk.Done("length", null))
@@ -467,5 +476,20 @@ class AgentRunnerUserProfileTest {
         assertEquals(3, client.requests.size());
         assertEquals(0, profile().pendingCount(UserProfileStore.projectScope(tmp)));
         assertFalse(events.stream().anyMatch(e -> e instanceof TurnEvent.Notice));
+    }
+
+    @Test void profileRequestReceivesSixtySecondBudgetWhileNormalChatUsesOriginalEntryPoint() throws Exception {
+        java.util.concurrent.atomic.AtomicLong remaining = new java.util.concurrent.atomic.AtomicLong();
+        FakeClient client = new FakeClient() {
+            @Override public ChatStream chatStream(ChatRequest request, long deadlineNanos) throws IOException {
+                remaining.set(deadlineNanos - System.nanoTime());
+                assertTrue(isExtraction(request));
+                return super.chatStream(request, deadlineNanos);
+            }
+        };
+        assertNull(done(turn(runner(client, profile()), "以后默认用中文回答")).error());
+        assertTrue(remaining.get() > TimeUnit.SECONDS.toNanos(50));
+        assertTrue(remaining.get() <= TimeUnit.SECONDS.toNanos(60));
+        assertEquals(2, client.requests.size());
     }
 }

@@ -18,6 +18,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 手写的 OpenAI 兼容流式客户端。
@@ -27,6 +33,14 @@ import java.util.concurrent.ExecutionException;
 public class OpenAiCompatClient {
 
     private static final int MAX_ATTEMPTS = 3;
+    private static final ScheduledThreadPoolExecutor DEADLINES = new ScheduledThreadPoolExecutor(1, r -> {
+        Thread thread = new Thread(r, "jaco-request-deadline");
+        thread.setDaemon(true);
+        return thread;
+    });
+    static {
+        DEADLINES.setRemoveOnCancelPolicy(true);
+    }
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
@@ -41,45 +55,91 @@ public class OpenAiCompatClient {
     }
 
     public ChatStream chatStream(ChatRequest request) throws IOException, InterruptedException {
-        HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(endpoint))
-                .header("Authorization", "Bearer " + apiKey)
-                .header("Content-Type", "application/json")
-                .header("Accept", "text/event-stream")
-                .POST(HttpRequest.BodyPublishers.ofByteArray(mapper.writeValueAsBytes(request)))
-                .build();
+        return openStream(request, null);
+    }
 
-        for (int attempt = 1; ; attempt++) {
-            CompletableFuture<HttpResponse<InputStream>> future =
-                    http.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
-            HttpResponse<InputStream> response;
-            try {
-                response = future.get();
-            } catch (ExecutionException e) {
-                if (attempt < MAX_ATTEMPTS && isRetryable(e.getCause())) {
-                    sleepBackoff(attempt);
+    /** 使用调用方提供的 nanoTime 截止时间，响应头、重试、错误正文与 SSE 共用预算。 */
+    public ChatStream chatStream(ChatRequest request, long deadlineNanos) throws IOException, InterruptedException {
+        return openStream(request, deadlineNanos);
+    }
+
+    private ChatStream openStream(ChatRequest request, Long deadline) throws IOException, InterruptedException {
+        byte[] payload = mapper.writeValueAsBytes(request);
+        RequestResources resources = new RequestResources(deadline);
+        boolean handedOff = false;
+        try {
+            for (int attempt = 1; ; attempt++) {
+                var builder = HttpRequest.newBuilder(URI.create(endpoint))
+                        .header("Authorization", "Bearer " + apiKey)
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "text/event-stream")
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(payload));
+                if (deadline != null) builder.timeout(Duration.ofNanos(remaining(deadline)));
+                HttpRequest httpRequest = builder.build();
+                CompletableFuture<HttpResponse<InputStream>> future =
+                        http.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+                resources.future = future;
+                future.thenAccept(response -> {
+                    if (resources.closed.get()) closeQuietly(response.body());
+                });
+                if (resources.closed.get()) future.cancel(true);
+                HttpResponse<InputStream> response;
+                try {
+                    response = deadline == null ? future.get() : future.get(remaining(deadline), TimeUnit.NANOSECONDS);
+                } catch (TimeoutException | CancellationException e) {
+                    throw new HttpTimeoutException("模型请求总预算已耗尽");
+                } catch (ExecutionException e) {
+                    if (deadline != null) remaining(deadline);
+                    if (attempt < MAX_ATTEMPTS && isRetryable(e.getCause())) {
+                        sleepBackoff(attempt, deadline);
+                        continue;
+                    }
+                    throw new IOException("请求失败: " + rootMessage(e), e);
+                }
+                resources.body = response.body();
+                if (resources.closed.get()) closeQuietly(response.body());
+                if (deadline != null) remaining(deadline);
+
+                int status = response.statusCode();
+                if ((status == 429 || status >= 500) && attempt < MAX_ATTEMPTS) {
+                    response.body().close();
+                    sleepBackoff(attempt, deadline);
                     continue;
                 }
-                throw new IOException("请求失败: " + rootMessage(e), e);
+                if (status >= 400) {
+                    String body;
+                    try {
+                        body = new String(response.body().readAllBytes(), StandardCharsets.UTF_8);
+                    } catch (IOException e) {
+                        if (deadline != null) remaining(deadline);
+                        throw e;
+                    }
+                    if (deadline != null) remaining(deadline);
+                    throw new JacoApiException(status, summarizeError(status, body));
+                }
+                ChatStream stream = startStream(response.body(), future, resources);
+                handedOff = true;
+                return stream;
             }
-
-            int status = response.statusCode();
-            if ((status == 429 || status >= 500) && attempt < MAX_ATTEMPTS) {
-                response.body().close();
-                sleepBackoff(attempt);
-                continue;
-            }
-            if (status >= 400) {
-                String body = new String(response.body().readAllBytes(), StandardCharsets.UTF_8);
-                throw new JacoApiException(status, summarizeError(status, body));
-            }
-            return startStream(response.body(), future);
+        } finally {
+            if (!handedOff) resources.close();
         }
     }
 
-    private ChatStream startStream(InputStream body, CompletableFuture<HttpResponse<InputStream>> future) {
-        ChatStream stream = new ChatStream(future);
-        Thread reader = new Thread(() -> consume(body, stream), "jaco-sse");
+    private ChatStream startStream(InputStream body, CompletableFuture<HttpResponse<InputStream>> future,
+                                   RequestResources resources) {
+        ChatStream stream = new ChatStream(future, resources::close);
+        resources.stream = stream;
+        Thread reader = new Thread(() -> {
+            try {
+                consume(body, stream);
+            } finally {
+                resources.close();
+            }
+        }, "jaco-sse");
+        resources.reader = reader;
         reader.setDaemon(true);
+        if (resources.closed.get()) stream.timeout();
         reader.start();
         return stream;
     }
@@ -161,8 +221,50 @@ public class OpenAiCompatClient {
                 || cause instanceof SocketTimeoutException;
     }
 
-    private static void sleepBackoff(int attempt) throws InterruptedException {
-        Thread.sleep(Duration.ofSeconds(1L << (attempt - 1)).toMillis());
+    private static void sleepBackoff(int attempt, Long deadline) throws InterruptedException, HttpTimeoutException {
+        long delay = Duration.ofSeconds(1L << (attempt - 1)).toNanos();
+        TimeUnit.NANOSECONDS.sleep(deadline == null ? delay : Math.min(delay, remaining(deadline)));
+        if (deadline != null) remaining(deadline);
+    }
+
+    private static long remaining(long deadline) throws HttpTimeoutException {
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) throw new HttpTimeoutException("模型请求总预算已耗尽");
+        return remaining;
+    }
+
+    private static void closeQuietly(InputStream body) {
+        if (body != null) {
+            try { body.close(); } catch (IOException ignored) { }
+        }
+    }
+
+    /** 截止时主动关闭阻塞读取的响应体；消费者结束或取消时撤销定时任务并释放资源。 */
+    private static final class RequestResources implements AutoCloseable {
+        final AtomicBoolean closed = new AtomicBoolean();
+        volatile CompletableFuture<?> future;
+        volatile InputStream body;
+        volatile ChatStream stream;
+        volatile Thread reader;
+        private final ScheduledFuture<?> timeout;
+
+        RequestResources(Long deadline) throws HttpTimeoutException {
+            timeout = deadline == null ? null : DEADLINES.schedule(() -> {
+                ChatStream active = stream;
+                if (active != null) active.timeout();
+                close();
+            }, remaining(deadline), TimeUnit.NANOSECONDS);
+        }
+
+        @Override public void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            if (timeout != null) timeout.cancel(false);
+            CompletableFuture<?> active = future;
+            if (active != null) active.cancel(true);
+            closeQuietly(body);
+            Thread worker = reader;
+            if (worker != null && worker != Thread.currentThread()) worker.interrupt();
+        }
     }
 
     private static String rootMessage(ExecutionException e) {

@@ -10,6 +10,7 @@ import com.jaco.llm.StreamChunk;
 import com.jaco.llm.Usage;
 
 import java.io.IOException;
+import java.net.http.HttpTimeoutException;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -55,6 +56,7 @@ public final class ProfileExtractor {
         if (cancelled.getAsBoolean() || !store.enabled()) {
             return new Result(List.of(), null);
         }
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
         // 传入所有当前范围的键，便于识别覆盖、删除；不把证据或其他项目画像交给模型。
         var existing = store.entries().stream()
                 .filter(e -> e.scope().equals("global") || e.scope().equals(project))
@@ -67,16 +69,18 @@ public final class ProfileExtractor {
                 List.of(Message.system(SYSTEM_PROMPT), Message.user(input)),
                 0.0, true, new ChatRequest.StreamOptions(true), null);
         beforeRequest.accept(request);
-        ChatStream stream = client.chatStream(request);
+        ChatStream stream = client.chatStream(request, deadline);
         currentStream.accept(stream);
         try (stream) {
             StringBuilder output = new StringBuilder();
-            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
             while (!cancelled.getAsBoolean()) {
-                if (System.nanoTime() > deadline) {
-                    throw new IOException("用户画像提取超时");
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    throw new HttpTimeoutException("用户画像提取总预算已耗尽");
                 }
-                StreamChunk chunk = stream.poll(100);
+                StreamChunk chunk = stream.poll(Math.max(1, Math.min(100,
+                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remaining))));
+                if (deadline - System.nanoTime() <= 0) throw new HttpTimeoutException("用户画像提取总预算已耗尽");
                 if (chunk instanceof StreamChunk.Delta delta) {
                     output.append(delta.text());
                     if (output.length() > 24_000) {

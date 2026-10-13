@@ -16,11 +16,17 @@ public final class ChatStream implements AutoCloseable {
 
     private final BlockingQueue<StreamChunk> queue;
     private final CompletableFuture<?> httpFuture;
+    private final Runnable cleanup;
     private volatile boolean cancelled;
 
     ChatStream(CompletableFuture<?> httpFuture) {
+        this(httpFuture, () -> { });
+    }
+
+    ChatStream(CompletableFuture<?> httpFuture, Runnable cleanup) {
         this.queue = new ArrayBlockingQueue<>(512);
         this.httpFuture = httpFuture;
+        this.cleanup = cleanup;
     }
 
     BlockingQueue<StreamChunk> queue() {
@@ -39,10 +45,20 @@ public final class ChatStream implements AutoCloseable {
 
     /** 中断本次生成：取消 HTTP 请求并唤醒所有等待者。 */
     public void cancel() {
+        terminate(INTERRUPTED);
+    }
+
+    void timeout() {
+        terminate(new StreamChunk.Error(new java.net.http.HttpTimeoutException("模型请求总预算已耗尽"), "模型请求总预算已耗尽"));
+    }
+
+    private synchronized void terminate(StreamChunk terminal) {
+        if (cancelled) return;
         cancelled = true;
         httpFuture.cancel(true);
         queue.clear();
-        queue.offer(INTERRUPTED);
+        queue.offer(terminal);
+        cleanup.run();
     }
 
     public boolean isCancelled() {
