@@ -76,7 +76,6 @@ public final class AgentRunner {
     private UserProfileStore userProfile;
     private String profileProject;
     private Set<ProfileContextSelector.Topic> profileTopics = Set.of();
-    private long profileRetryAfter;
 
     /** 主程序显式绑定画像存储；独立测试/嵌入式调用可不启用。 */
     public void bindUserProfile(UserProfileStore store) throws IOException {
@@ -108,7 +107,6 @@ public final class AgentRunner {
             }
             if (command.equals("on") || command.equals("off")) {
                 userProfile.setEnabled(command.equals("on"));
-                if (command.equals("off")) profileRetryAfter = 0;
                 return command.equals("on") ? "已开启自动记忆与画像加载" : "已关闭自动记忆与画像加载，已有记录保留";
             }
             if (command.equals("clear")) {
@@ -116,12 +114,10 @@ public final class AgentRunner {
                     return "已取消清空";
                 }
                 userProfile.clear();
-                profileRetryAfter = 0;
                 return "已清空用户画像";
             }
             if (command.startsWith("forget ")) {
                 boolean forgotten = userProfile.forget(command.substring(7).strip());
-                if (forgotten) profileRetryAfter = 0;
                 return forgotten ? "已删除画像条目" : "没有匹配的画像条目 ID";
             }
             return "用法: /memory [forget <ID> | clear | off | on]";
@@ -222,8 +218,7 @@ public final class AgentRunner {
     }
 
     public boolean hasPendingUserProfile() {
-        return userProfile != null && userProfile.enabled() && userProfile.retryReady()
-                && System.currentTimeMillis() >= profileRetryAfter
+        return userProfile != null && userProfile.enabled()
                 && userProfile.pendingCount(profileProject) > 0;
     }
 
@@ -260,17 +255,16 @@ public final class AgentRunner {
             } catch (InterruptedException e) {
                 throw e;
             } catch (Exception e) {
-                if (!handle.isCancelled()) {
-                    profileRetryAfter = System.currentTimeMillis() + 60_000;
-                    try {
-                        userProfile.markExtractionFailed();
-                    } catch (IOException writeError) {
-                        log.warn("画像重试状态保存失败（{}）", writeError.getClass().getSimpleName());
-                    }
-                    handle.emit(new TurnEvent.Notice("用户画像未更新，待处理消息保留；60 秒内不自动重试"));
-                    log.warn("用户画像提取失败（{}）", e.getClass().getSimpleName());
+                if (handle.isCancelled()) break;
+                try {
+                    userProfile.discardBatch(batch, profileProject);
+                } catch (IOException writeError) {
+                    log.warn("画像失败批次清理失败（{}），停止处理", writeError.getClass().getSimpleName());
+                    handle.emit(new TurnEvent.Notice("待处理画像消息清理失败，已停止本次处理，原记录保留"));
+                    break;
                 }
-                break;
+                log.warn("用户画像提取失败（{}），已丢弃 {} 条消息", e.getClass().getSimpleName(), batch.size());
+                continue;
             }
             if (!drain) break;
         }

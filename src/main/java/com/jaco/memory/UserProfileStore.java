@@ -1,6 +1,7 @@
 package com.jaco.memory;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -26,10 +27,11 @@ public final class UserProfileStore {
     private final Path file;
     private Profile profile;
 
+    @JsonIgnoreProperties("retryAfter") // 兼容旧画像文件；失败冷却状态不再使用或保存。
     public record Profile(boolean enabled, List<ProfileEntry> entries,
-                          List<PendingProfileMessage> pending, long retryAfter, Map<String, Long> processedAt) {
+                          List<PendingProfileMessage> pending, Map<String, Long> processedAt) {
         public Profile(boolean enabled, List<ProfileEntry> entries) {
-            this(enabled, entries, List.of(), 0, Map.of());
+            this(enabled, entries, List.of(), Map.of());
         }
         public Profile {
             pending = pending == null ? List.of() : List.copyOf(pending);
@@ -78,7 +80,7 @@ public final class UserProfileStore {
 
     public synchronized void setEnabled(boolean enabled) throws IOException {
         persist(new Profile(enabled, profile.entries(), enabled ? profile.pending() : List.of(),
-                enabled ? profile.retryAfter() : 0, enabled ? profile.processedAt() : Map.of()));
+                enabled ? profile.processedAt() : Map.of()));
     }
 
     public synchronized boolean forget(String id) throws IOException {
@@ -99,13 +101,16 @@ public final class UserProfileStore {
         return (int) profile.pending().stream().filter(m -> m.project().equals(project)).count();
     }
 
-    public synchronized boolean retryReady() {
-        return System.currentTimeMillis() >= profile.retryAfter();
-    }
-
-    public synchronized void markExtractionFailed() throws IOException {
-        persist(new Profile(profile.enabled(), profile.entries(), profile.pending(), System.currentTimeMillis() + 60_000,
-                profile.processedAt()));
+    /** 只丢弃实际失败的当前批次，原画像及其他项目/后续批次保持不变。 */
+    public synchronized void discardBatch(List<PendingProfileMessage> batch, String project) throws IOException {
+        if (batch.isEmpty() || !batch.equals(pendingBatch(project))) {
+            throw new IOException("待处理画像批次已经变化");
+        }
+        List<PendingProfileMessage> remaining = new ArrayList<>(profile.pending());
+        remaining.removeAll(batch);
+        Map<String, Long> processedAt = new HashMap<>(profile.processedAt());
+        processedAt.entrySet().removeIf(e -> remaining.stream().noneMatch(m -> m.createdAt() < e.getValue()));
+        persist(new Profile(profile.enabled(), profile.entries(), List.copyOf(remaining), Map.copyOf(processedAt)));
     }
 
     public synchronized void enqueue(String prompt, String previousAssistant, String session, String project)
@@ -117,7 +122,7 @@ public final class UserProfileStore {
         createdAt = Math.max(createdAt, profile.processedAt().values().stream().mapToLong(Long::longValue).max().orElse(0) + 1);
         next.add(new PendingProfileMessage(UUID.randomUUID().toString(), session, project, prompt, previousAssistant, createdAt));
         validatePending(next);
-        persist(new Profile(profile.enabled(), profile.entries(), List.copyOf(next), profile.retryAfter(), profile.processedAt()));
+        persist(new Profile(profile.enabled(), profile.entries(), List.copyOf(next), profile.processedAt()));
     }
 
     /** 按时间顺序分批，最多十条、合计二万字符；不同项目绝不混在同一请求中。 */
@@ -226,7 +231,7 @@ public final class UserProfileStore {
         processedAt.entrySet().removeIf(e -> remaining.stream().noneMatch(m -> m.createdAt() < e.getValue()));
         if (!changes.isEmpty() || batch || !processedAt.equals(profile.processedAt())) {
             validateEntries(next);
-            persist(new Profile(profile.enabled(), List.copyOf(next), List.copyOf(remaining), batch ? 0 : profile.retryAfter(),
+            persist(new Profile(profile.enabled(), List.copyOf(next), List.copyOf(remaining),
                     Map.copyOf(processedAt)));
         }
         return List.copyOf(changes);

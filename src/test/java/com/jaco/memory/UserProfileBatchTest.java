@@ -106,14 +106,19 @@ class UserProfileBatchTest {
         assertTrue(ProfileExtractionPolicy.shouldQueue("好的，以后默认中文"));
     }
 
-    @Test void cooldownPersistsAcrossReloadAndSuccessfulBatchClearsIt() throws Exception {
+    @Test void discardedBatchIsRemovedPersistentlyWithoutTouchingOtherProjectsOrLaterMessages() throws Exception {
         UserProfileStore store = store();
-        store.enqueue("解释递归", "", "s", project());
-        store.markExtractionFailed();
-        assertFalse(store().retryReady());
-        store.applyBatch("{\"operations\":[]}", store.pendingBatch(project()), project());
-        assertTrue(store().retryReady());
-        assertEquals(0, store().pendingCount(project()));
+        String other = tmp.resolve("other").toString();
+        for (int i = 0; i < 12; i++) store.enqueue("解释第" + i + "题", "", "s", project());
+        store.enqueue("另一个项目的问题", "", "s", other);
+        var entries = store.entries();
+        var first = store.pendingBatch(project());
+        store.discardBatch(first, project());
+        assertEquals(entries, store().entries());
+        assertEquals(2, store().pendingCount(project()));
+        assertEquals(1, store().pendingCount(other));
+        assertEquals("解释第10题", store().pendingBatch(project()).get(0).message());
+        assertThrows(IOException.class, () -> store.discardBatch(first, project()));
     }
 
     @Test void manualForgettingDiscardsOlderCandidatesSoTheyCannotRecreateRemovedEntry() throws Exception {
@@ -144,6 +149,8 @@ class UserProfileBatchTest {
         assertThrows(IOException.class, () -> store.applyBatch(
                 output(List.of(operation(batch.get(0).id(), "中文", "中文"))), batch, project()));
         assertTrue(store.entries().isEmpty());
+        assertEquals(batch, store.pendingBatch(project()));
+        assertThrows(IOException.class, () -> store.discardBatch(batch, project()));
         assertEquals(batch, store.pendingBatch(project()));
         assertEquals("keep", Files.readString(tmp.resolve("profile.json/sentinel")));
     }
@@ -177,5 +184,17 @@ class UserProfileBatchTest {
         loaded.applyBatch(output(List.of(operation(older.get(0).id(), "中文", "中文"))), older, other);
         assertTrue(store().entries().isEmpty());
         assertEquals(0, store().pendingCount(other));
+    }
+
+    @Test void legacyCooldownIsIgnoredAndRemovedOnNextWrite() throws Exception {
+        UserProfileStore store = store();
+        store.enqueue("解释递归", "", "s", project());
+        var root = (com.fasterxml.jackson.databind.node.ObjectNode) MAPPER.readTree(Files.readString(tmp.resolve("profile.json")));
+        root.put("retryAfter", Long.MAX_VALUE);
+        Files.writeString(tmp.resolve("profile.json"), root.toString());
+        UserProfileStore reloaded = store();
+        reloaded.discardBatch(reloaded.pendingBatch(project()), project());
+        assertEquals(0, store().pendingCount(project()));
+        assertFalse(MAPPER.readTree(Files.readString(tmp.resolve("profile.json"))).has("retryAfter"));
     }
 }
