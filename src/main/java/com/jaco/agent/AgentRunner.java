@@ -467,7 +467,9 @@ public final class AgentRunner {
                     && "stop".equals(finishReason)) {
                 try {
                     userProfile.enqueue(prompt, previousAssistant, session.id(), profileProject);
-                    boolean immediate = ProfileExtractionPolicy.immediate(prompt);
+                    var decision = ProfileExtractionPolicy.classify(prompt);
+                    log.debug("画像提取策略：{} ({})", decision.action(), decision.reason());
+                    boolean immediate = decision.action() == ProfileExtractionPolicy.Action.IMMEDIATE;
                     if (immediate || userProfile.pendingCount(profileProject) >= UserProfileStore.BATCH_SIZE) {
                         Usage extracted = processPendingProfile(handle, immediate);
                         if (extracted != null) totalUsage = totalUsage == null ? extracted : mergeUsage(totalUsage, extracted);

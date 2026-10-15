@@ -265,16 +265,17 @@ class AgentRunnerUserProfileTest {
         assertTrue(profile().entries().isEmpty());
     }
 
-    @Test void extractionUsesCurrentRawMessageAndPreviousAssistantButNotOlderConversation() throws Exception {
+    @Test void batchedInputRetainsOriginalQuotationAndPerMessageAssistantContext() throws Exception {
         FakeClient client = new FakeClient();
         AgentRunner agent = runner(client, profile());
         client.extraction = "{\"operations\":[]}";
         turn(agent, "我在引用别人说：我是医生");
         turn(agent, "以后默认用中文回答");
-        var input = MAPPER.readTree(client.requests.get(3).messages().get(1).content());
-        assertEquals("以后默认用中文回答", input.path("messages").get(0).path("user_message").asText());
-        assertEquals("已完成", input.path("messages").get(0).path("previous_assistant").asText());
-        assertFalse(input.toString().contains("我是医生"));
+        assertEquals(3, client.requests.size());
+        var input = MAPPER.readTree(client.requests.get(2).messages().get(1).content());
+        assertEquals("我在引用别人说：我是医生", input.path("messages").get(0).path("user_message").asText());
+        assertEquals("以后默认用中文回答", input.path("messages").get(1).path("user_message").asText());
+        assertEquals("已完成", input.path("messages").get(1).path("previous_assistant").asText());
         assertTrue(profile().entries().isEmpty());
     }
 
@@ -491,5 +492,24 @@ class AgentRunnerUserProfileTest {
         assertTrue(remaining.get() > TimeUnit.SECONDS.toNanos(50));
         assertTrue(remaining.get() <= TimeUnit.SECONDS.toNanos(60));
         assertEquals(2, client.requests.size());
+    }
+
+    @Test void technicalDefaultsAndQuotedIdentityWaitForBatchButNewOccupationTriggersImmediately() throws Exception {
+        FakeClient client = new FakeClient();
+        client.extraction = "{\"operations\":[]}";
+        UserProfileStore profile = profile();
+        AgentRunner agent = runner(client, profile);
+        List<String> ordinary = List.of("这个参数默认是多少？", "把接口超时默认值改成30秒",
+                "下面是引用：\n> 我是一名医生", "例子：\n```text\n默认用中文回复\n```", "我是说这个方法有问题");
+        for (String prompt : ordinary) assertNull(done(turn(agent, prompt)).error());
+        assertEquals(5, client.requests.size());
+        assertEquals(5, profile.pendingCount(UserProfileStore.projectScope(tmp)));
+        assertEquals(ordinary.get(3), profile.pendingBatch(UserProfileStore.projectScope(tmp)).get(3).message());
+        assertNull(done(turn(agent, "我是一名摄影师")).error());
+        assertEquals(7, client.requests.size());
+        assertEquals(0, profile.pendingCount(UserProfileStore.projectScope(tmp)));
+        var messages = MAPPER.readTree(client.requests.getLast().messages().get(1).content()).path("messages");
+        assertEquals(6, messages.size());
+        assertEquals("我是一名摄影师", messages.get(5).path("user_message").asText());
     }
 }
