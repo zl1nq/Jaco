@@ -33,6 +33,16 @@ public final class JsonSchema {
         return typed(name, "integer", description);
     }
 
+    public JsonSchema bool(String name, String description) {
+        return typed(name, "boolean", description);
+    }
+
+    public JsonSchema strings(String name, String description) {
+        properties.putObject(name).put("type", "array").put("description", description)
+                .putObject("items").put("type", "string");
+        return this;
+    }
+
     public JsonSchema string(String name, String description, String... enumValues) {
         ObjectNode prop = properties.putObject(name);
         prop.put("type", "string").put("description", description);

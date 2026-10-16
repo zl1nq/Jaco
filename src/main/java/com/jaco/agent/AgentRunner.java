@@ -51,7 +51,7 @@ public final class AgentRunner {
             """;
 
     /** 子 agent 的只读工具集；不含 task（禁止递归 spawn）与写/执行类工具。 */
-    private static final Set<String> SUBAGENT_TOOLS = Set.of("read_file", "list_dir", "grep", "recall");
+    private static final Set<String> SUBAGENT_TOOLS = Set.of("read_file", "list_dir", "grep", "find_files", "recall");
 
     private static final String SUBAGENT_SYSTEM_PROMPT = """
             你是 jaco 的子 agent，被主 agent 委派执行一个只读调查任务。
@@ -855,6 +855,7 @@ public final class AgentRunner {
                   用户明确要求记住或忘记时可简短确认需求，不宣称尚未实际完成的保存、删除；完整记录可用 /memory 查看。
 
                 # 工具使用守则
+                - 按文件名或路径定位文件用 find_files，搜索文件内容用 grep，查看单层目录用 list_dir
                 - 修改文件前先 read_file 了解现状；大文件用 offset/limit 分页读取
                 - 修改已有文件优先使用 edit_file，old_text 必须精确唯一匹配；write_file 用于新建或明确的整文件重写
                 - 修改已有文件必须传 expected_version，使用 read_file 或上次写入返回的文件版本；版本不匹配时重新读取，不能沿用旧版本

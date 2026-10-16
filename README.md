@@ -170,6 +170,7 @@ java -jar /path/to/jaco/target/jaco.jar
 | `read_file` | 带行号读取文件，支持分页 | 自动放行 |
 | `list_dir` | 浏览目录 | 自动放行 |
 | `grep` | 搜索文件内容 | 自动放行 |
+| `find_files` | 按文件名或相对路径 glob 定位文件 | 自动放行 |
 | `recall` | 搜索当前会话归档、预览命中片段，按条目 ID 分页读取原文 | 自动放行 |
 | `write_file` | 严格校验参数后，以 UTF-8 原子新建或覆盖文件 | 需确认 |
 | `edit_file` | 精确唯一匹配原文，原子替换已有文件中的一个片段 | 需确认 |
@@ -196,7 +197,13 @@ java -jar /path/to/jaco/target/jaco.jar
 
 文件工具的路径访问限定在工作目录及 `workspace.extra_roots` 中。`run_command` 使用本机 shell 执行，这个文件路径限制不构成命令进程的系统级沙箱。命令超时为 120 秒；输出读取量受限，回填最多保留末尾 50,000 字符，再经过单条工具输出的归档处理。
 
-子 agent 只能使用只读工具，不能写文件、执行命令或递归创建子 agent；中间探索过程不进入父会话上下文，最终报告作为工具结果返回。
+搜索文件位置优先使用 `find_files`，搜索内容使用 `grep`。两者都支持 `path`（默认工作目录）、`max_results`（默认 100，范围 1–1000）、`exclude`（glob 数组）和 `include_ignored`（默认 false）。`find_files.pattern` 和 `grep.include` 无斜杠时匹配文件名，有斜杠时匹配搜索根下的相对路径，开头的 `**/` 也匹配零层目录；如 `**/*Tool.java` 可以同时找到根目录和子目录中的工具文件。返回路径统一使用 `/`；单文件搜索返回文件名。结果顺序依赖目录遍历顺序，不提供分页；达到上限提前停止并提示可能还有结果，可缩小范围继续查找。
+
+默认剪枝目录：`.git`、`.svn`、`.hg`、`node_modules`、`target`、`build`、`dist`、`.gradle`、`.idea`、`.venv`、`__pycache__`。设 `include_ignored: true` 可搜索这些目录；也可以直接将某个默认排除目录指定为搜索根。`exclude` 始终生效，无斜杠的目录名会排除该名称的子目录及其内容，如 `["generated", "*.min.js"]`。这些是内置目录规则，不读取 `.gitignore`。遍历不跟随子项符号链接，每个读取文件再次校验路径沙箱；无法读取的文件、遍历失败和跳过的符号链接会汇总提示，避免将搜索不完整误认为没有匹配。
+
+`grep.pattern` 默认是 Java 正则，`literal: true` 切换为普通文本，`ignore_case: true` 忽略大小写。`context_lines` 可设 0–10，默认 0；上限按命中行计算，上下文行不计入且重叠部分不重复输出。命中行格式为 `路径:行号: 内容`，上下文为 `路径-行号- 内容`。文本按 UTF-8 逐行读取，前 8192 字节存在零字节的文件按二进制跳过；长行围绕命中位置展示约 200 个字符并标明列号（Java UTF-16 单位），完整内容可用 `read_file` 查看。两个搜索工具均支持取消；不支持跨行正则匹配。
+
+子 agent 只能使用 `read_file`、`list_dir`、`grep`、`find_files`、`recall`，不能写文件、执行命令或递归创建子 agent；中间探索过程不进入父会话上下文，最终报告作为工具结果返回。
 
 ## 配置参考
 
@@ -271,7 +278,7 @@ JACO 用两层机制控制发送给模型的上下文体积：
 | `tui` | 基于 JLine 3 的 REPL，消费 `TurnEvent`，处理渲染、确认、命令和中断 |
 | `agent` | `AgentRunner` 驱动工具循环与只读子 agent；`ContextCompactor` 管理压缩与归档 |
 | `llm` | 手写 OpenAI 兼容 SSE 客户端，处理流式响应、工具调用增量、重试和取消 |
-| `tool` | 工具接口与注册表、8 个内置工具、权限钩子和文件路径沙箱 |
+| `tool` | 工具接口与注册表、9 个内置工具、权限钩子和文件路径沙箱 |
 | `render` | Markdown 流式渲染、代码高亮、表格对齐与 CJK 显示宽度计算 |
 | `hook` | agent 生命周期钩子，可接入权限、审计与续轮逻辑 |
 | `session` | 会话 JSON 保存、恢复与 JSONL 归档 |

@@ -12,6 +12,7 @@ import com.jaco.tool.PermissionHook;
 import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
 import com.jaco.tool.builtin.GrepTool;
+import com.jaco.tool.builtin.FindFilesTool;
 import com.jaco.tool.builtin.EditFileTool;
 import com.jaco.tool.builtin.ListDirTool;
 import com.jaco.tool.builtin.ReadFileTool;
@@ -64,6 +65,7 @@ public final class Main {
         registry.register(new ListDirTool());
         registry.register(new RunCommandTool());
         registry.register(new GrepTool());
+        registry.register(new FindFilesTool());
         registry.register(new RecallTool());
         com.jaco.tool.builtin.TaskTool taskTool = new com.jaco.tool.builtin.TaskTool();
         registry.register(taskTool);

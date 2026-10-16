@@ -14,6 +14,7 @@ import com.jaco.session.SessionStore;
 import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
 import com.jaco.tool.builtin.GrepTool;
+import com.jaco.tool.builtin.FindFilesTool;
 import com.jaco.tool.builtin.ListDirTool;
 import com.jaco.tool.builtin.RecallTool;
 import com.jaco.tool.builtin.ReadFileTool;
@@ -62,6 +63,7 @@ class AgentRunnerSubagentTest {
         registry.register(new EditFileTool());
         registry.register(new ListDirTool());
         registry.register(new GrepTool());
+        registry.register(new FindFilesTool());
         registry.register(new RecallTool());
         registry.register(new TaskTool());
         SessionStore store = new SessionStore(tmp);
@@ -99,7 +101,7 @@ class AgentRunnerSubagentTest {
         // 第一次请求只携带只读工具定义，且不含 task（禁止递归）
         Set<String> names = client.requests.get(0).tools().stream()
                 .map(t -> t.function().name()).collect(Collectors.toSet());
-        assertEquals(Set.of("read_file", "list_dir", "grep", "recall"), names);
+        assertEquals(Set.of("read_file", "list_dir", "grep", "find_files", "recall"), names);
 
         // 第二次请求带上了 assistant(tool_calls) 与子 agent 的 tool result
         String msgs = render(client.requests.get(1).messages());
