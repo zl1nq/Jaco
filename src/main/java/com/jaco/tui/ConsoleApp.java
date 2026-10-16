@@ -57,6 +57,7 @@ public final class ConsoleApp {
             return true;
         }));
         commands.put("new", new Command.Simple("new", "开新会话（清空上下文与权限放行记录）", args -> {
+            if (!flushProfile()) return true;
             agent.newSession();
             println(ANSI_DIM + "已开始新会话 " + agent.session().id() + ANSI_RESET);
             return true;
@@ -71,6 +72,7 @@ public final class ConsoleApp {
                 println(ANSI_YELLOW + "用法: /switch <会话id>，/sessions 查看" + ANSI_RESET);
                 return true;
             }
+            if (agent.profileFlushBeforeSwitch(id) && !flushProfile()) return true;
             String error = agent.switchSession(id);
             if (error != null) {
                 println(ANSI_YELLOW + error + ANSI_RESET);
@@ -84,7 +86,21 @@ public final class ConsoleApp {
             println(agent.deleteSession(args, this::confirmSessionDeletion));
             return true;
         }));
+        commands.put("memory", new Command.Simple("memory", "用户画像：/memory [forget <ID> | clear | off | on]", args -> {
+            println(agent.memoryCommand(args, this::confirmMemoryClear));
+            return true;
+        }));
         commands.put("exit", new Command.Simple("exit", "退出（Ctrl+D 同效）", args -> false));
+    }
+
+    private boolean confirmMemoryClear() {
+        println(ANSI_YELLOW + "将清空全部用户画像（包括所有项目），此操作不可恢复。" + ANSI_RESET);
+        try {
+            String answer = reader.readLine("确认清空？[y/N] ");
+            return answer != null && answer.strip().equalsIgnoreCase("y");
+        } catch (UserInterruptException | EndOfFileException e) {
+            return false;
+        }
     }
 
     private boolean confirmSessionDeletion(com.jaco.session.Session target) {
@@ -146,6 +162,7 @@ public final class ConsoleApp {
             }
             runTurn(line);
         }
+        flushProfile();
         println(ANSI_DIM + "再见。" + ANSI_RESET);
     }
 
@@ -203,8 +220,15 @@ public final class ConsoleApp {
     // ---- 一轮对话：消费 agent loop 的事件流 ----
 
     private void runTurn(String prompt) {
+        consumeTurn(agent.runTurn(prompt));
+    }
+
+    private boolean flushProfile() {
+        return !agent.hasPendingUserProfile() || consumeTurn(agent.flushUserProfile());
+    }
+
+    private boolean consumeTurn(TurnHandle handle) {
         long start = System.currentTimeMillis();
-        TurnHandle handle = agent.runTurn(prompt);
         Spinner spinner = new Spinner(terminal);
         MarkdownRenderer renderer = new MarkdownRenderer();
         StringBuilder pending = new StringBuilder();
@@ -275,6 +299,7 @@ public final class ConsoleApp {
                         println(ANSI_DIM + "  │ " + lines[i] + ANSI_RESET);
                     }
                 } else if (event instanceof TurnEvent.Notice n) {
+                    flushPending(renderer, pending);
                     // 暗色状态行；spinner 在下一行继续（sawOutput 仍为 false 时）
                     spinner.stop();
                     rawPrint(ANSI_DIM + n.text() + ANSI_RESET + "\n");
@@ -321,6 +346,7 @@ public final class ConsoleApp {
         }
         String mark = !aborted && !interrupted && error == null ? ANSI_GREEN + "✓" : ANSI_DIM + "·";
         println(mark + ANSI_RESET + ANSI_DIM + statusSuffix(usage, finishReason, iterations) + ANSI_RESET);
+        return !interrupted && error == null;
     }
 
     private String askApproval(TurnEvent.ApprovalRequest request) {
