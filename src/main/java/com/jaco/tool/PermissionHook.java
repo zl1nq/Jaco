@@ -97,7 +97,8 @@ public final class PermissionHook implements AgentHook {
         return switch (call.function().name()) {
             case "write_file" -> "写入文件 " + extractArg(call, "path");
             case "edit_file" -> "局部修改文件 " + extractArg(call, "path");
-            case "run_command" -> "执行命令: " + extractArg(call, "command");
+            case "run_command" -> "执行命令: " + extractArg(call, "command")
+                    + "\n执行参数: " + call.function().arguments();
             default -> String.valueOf(call.function().arguments());
         };
     }

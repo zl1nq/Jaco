@@ -1,5 +1,7 @@
 package com.jaco.agent;
 
+import com.jaco.tool.ProcessTree;
+
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -61,7 +63,7 @@ public final class TurnHandle implements AutoCloseable {
         }
         var process = currentProcess.get();
         if (process != null && process.isAlive()) {
-            process.destroyForcibly();
+            ProcessTree.terminate(process);
         }
         Thread loop = loopThread;
         if (loop != null) {

@@ -130,11 +130,9 @@ public final class SessionStore {
         if (messages.isEmpty()) {
             return;
         }
-        try (var writer = Files.newBufferedWriter(archivePath(session), StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+        try {
             for (Message m : messages) {
-                writer.write(mapper.writeValueAsString(m));
-                writer.write("\n");
+                appendArchiveLine(archivePath(session), mapper.writeValueAsString(m));
             }
         } catch (IOException e) {
             throw new UncheckedIOException("归档写入失败: " + archivePath(session), e);
@@ -143,13 +141,17 @@ public final class SessionStore {
 
     /** 把单个超大工具输出追加到归档文件。 */
     public void appendArchivedOutput(Session session, String output) {
-        try (var writer = Files.newBufferedWriter(archivePath(session), StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
-            writer.write(mapper.writeValueAsString(Map.of("archived", "tool_output", "content", output)));
-            writer.write("\n");
+        try {
+            appendArchiveLine(archivePath(session), mapper.writeValueAsString(Map.of("archived", "tool_output", "content", output)));
         } catch (IOException e) {
             throw new UncheckedIOException("归档写入失败: " + archivePath(session), e);
         }
+    }
+
+    /** 命令输出线程与会话压缩可能同时追加，必须按完整 JSONL 记录串行写入。 */
+    public static synchronized void appendArchiveLine(Path archive, String json) throws IOException {
+        Files.writeString(archive, json + "\n", StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
     public List<Message> messagesOf(Session session) {
