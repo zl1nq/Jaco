@@ -13,6 +13,7 @@ import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
 import com.jaco.tool.builtin.GrepTool;
 import com.jaco.tool.builtin.GitStatusTool;
+import com.jaco.tool.builtin.WebFetchTool;
 import com.jaco.tool.builtin.GitDiffTool;
 import com.jaco.tool.builtin.BackgroundProcessManager;
 import com.jaco.tool.builtin.ProcessStartTool;
@@ -70,6 +71,8 @@ public final class Main {
         registry.register(new EditFileTool());
         registry.register(new ListDirTool());
         registry.register(new RunCommandTool());
+        WebFetchTool webFetch = new WebFetchTool();
+        registry.register(webFetch);
         BackgroundProcessManager background = new BackgroundProcessManager();
         registry.register(new ProcessStartTool(background));
         registry.register(new ProcessPollTool(background));
@@ -95,7 +98,7 @@ public final class Main {
                 provider,
                 config.systemPrompt(),
                 sessions,
-                new HookChain(List.of(permissionHook, background)),
+                new HookChain(List.of(permissionHook, background, webFetch)),
                 registry,
                 sandbox,
                 workspaceRoot,
@@ -111,11 +114,15 @@ public final class Main {
         agent.start();
         taskTool.bind(agent::runSubagent);
 
-        Thread shutdown = new Thread(background::close, "jaco-background-shutdown");
+        Thread shutdown = new Thread(() -> {
+            webFetch.close();
+            background.close();
+        }, "jaco-tools-shutdown");
         Runtime.getRuntime().addShutdownHook(shutdown);
         try {
             new ConsoleApp(agent).run();
         } finally {
+            webFetch.close();
             background.close();
             try {
                 Runtime.getRuntime().removeShutdownHook(shutdown);

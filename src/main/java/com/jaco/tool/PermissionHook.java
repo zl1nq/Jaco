@@ -7,6 +7,7 @@ import com.jaco.agent.TurnEventSink;
 import com.jaco.hook.AgentHook;
 import com.jaco.hook.HookVerdict;
 import com.jaco.llm.ToolCall;
+import com.jaco.tool.builtin.WebUrlPolicy;
 
 import java.util.List;
 import java.util.Set;
@@ -46,6 +47,16 @@ public final class PermissionHook implements AgentHook {
     @Override
     public HookVerdict onBeforeToolCall(ToolCall call) {
         String name = call.function().name();
+        if (name.equals("web_fetch")) {
+            try {
+                var args = MAPPER.readTree(call.function().arguments());
+                if (args.has("fetch_id") && !args.has("url")) return HookVerdict.allow();
+                String key = "web_fetch:" + WebUrlPolicy.origin(args.path("url").asText());
+                return sessionAllowed.contains(key) ? HookVerdict.allow() : askUser(call, key);
+            } catch (Exception e) {
+                return HookVerdict.deny("无效的网页抓取参数");
+            }
+        }
         if (name.equals("run_command") || name.equals("process_start")) {
             String command = extractArg(call, "command");
             for (Pattern p : DENY_PATTERNS) {
@@ -57,10 +68,10 @@ public final class PermissionHook implements AgentHook {
         if (READ_ONLY.contains(name) || sessionAllowed.contains(name)) {
             return HookVerdict.allow();
         }
-        return askUser(call);
+        return askUser(call, name);
     }
 
-    private HookVerdict askUser(ToolCall call) {
+    private HookVerdict askUser(ToolCall call, String allowanceKey) {
         TurnEventSink sink = TurnEventSink.current();
         if (sink == null) {
             // 无 UI 场景（测试/嵌入）：没有确认渠道，默认拒绝，宁可保守
@@ -73,7 +84,7 @@ public final class PermissionHook implements AgentHook {
             return switch (response) {
                 case "y" -> HookVerdict.allow();
                 case "a" -> {
-                    sessionAllowed.add(call.function().name());
+                    sessionAllowed.add(allowanceKey);
                     yield HookVerdict.allow();
                 }
                 default -> HookVerdict.deny("用户拒绝执行");
@@ -106,6 +117,8 @@ public final class PermissionHook implements AgentHook {
             case "run_command", "process_start" -> "执行命令: " + extractArg(call, "command")
                     + "\n执行参数: " + call.function().arguments();
             case "process_stop" -> "停止后台任务: " + extractArg(call, "task_id");
+            case "web_fetch" -> "网络读取: " + extractArg(call, "url")
+                    + "\n会跟随最多 5 次公共地址重定向，不发送凭据；a 仅放行本会话对初始源站的抓取。";
             default -> String.valueOf(call.function().arguments());
         };
     }

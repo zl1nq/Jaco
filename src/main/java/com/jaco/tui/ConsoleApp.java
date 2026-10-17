@@ -352,7 +352,9 @@ public final class ConsoleApp {
     private String askApproval(TurnEvent.ApprovalRequest request) {
         println(ANSI_YELLOW + "╭─ 需要确认 ─────────────────" + ANSI_RESET);
         println(ANSI_YELLOW + "│ " + ANSI_RESET + request.detail());
-        println(ANSI_YELLOW + "╰─" + ANSI_RESET + ANSI_DIM + " y=本次 · a=本会话放行 · n=拒绝" + ANSI_RESET);
+        String approval = request.tool().equals("web_fetch") ? " y=本次 · a=本会话同源站点放行 · n=拒绝"
+                : " y=本次 · a=本会话放行 · n=拒绝";
+        println(ANSI_YELLOW + "╰─" + ANSI_RESET + ANSI_DIM + approval + ANSI_RESET);
         while (true) {
             String line;
             try {
