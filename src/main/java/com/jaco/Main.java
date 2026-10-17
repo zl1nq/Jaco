@@ -12,6 +12,10 @@ import com.jaco.tool.PermissionHook;
 import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
 import com.jaco.tool.builtin.GrepTool;
+import com.jaco.tool.builtin.BackgroundProcessManager;
+import com.jaco.tool.builtin.ProcessStartTool;
+import com.jaco.tool.builtin.ProcessPollTool;
+import com.jaco.tool.builtin.ProcessStopTool;
 import com.jaco.tool.builtin.FindFilesTool;
 import com.jaco.tool.builtin.EditFileTool;
 import com.jaco.tool.builtin.ListDirTool;
@@ -64,6 +68,10 @@ public final class Main {
         registry.register(new EditFileTool());
         registry.register(new ListDirTool());
         registry.register(new RunCommandTool());
+        BackgroundProcessManager background = new BackgroundProcessManager();
+        registry.register(new ProcessStartTool(background));
+        registry.register(new ProcessPollTool(background));
+        registry.register(new ProcessStopTool(background));
         registry.register(new GrepTool());
         registry.register(new FindFilesTool());
         registry.register(new RecallTool());
@@ -83,7 +91,7 @@ public final class Main {
                 provider,
                 config.systemPrompt(),
                 sessions,
-                new HookChain(List.of(permissionHook)),
+                new HookChain(List.of(permissionHook, background)),
                 registry,
                 sandbox,
                 workspaceRoot,
@@ -99,7 +107,18 @@ public final class Main {
         agent.start();
         taskTool.bind(agent::runSubagent);
 
-        new ConsoleApp(agent).run();
+        Thread shutdown = new Thread(background::close, "jaco-background-shutdown");
+        Runtime.getRuntime().addShutdownHook(shutdown);
+        try {
+            new ConsoleApp(agent).run();
+        } finally {
+            background.close();
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdown);
+            } catch (IllegalStateException ignored) {
+                // JVM 正在退出，清理钩子可能已开始；close 可以重复调用。
+            }
+        }
     }
 
     /** 数据目录：JACO_HOME 环境变量优先，默认 ~/.jaco。 */

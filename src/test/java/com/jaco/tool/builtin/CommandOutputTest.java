@@ -3,6 +3,7 @@ package com.jaco.tool.builtin;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jaco.session.Session;
 import com.jaco.session.SessionStore;
+import com.jaco.tool.ToolException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -18,6 +19,36 @@ class CommandOutputTest {
 
     @TempDir
     Path tmp;
+
+    @Test
+    void pagesUnicodeAndArchivesSmallBackgroundLogs() throws Exception {
+        Path archive = tmp.resolve("small.jsonl");
+        CommandOutput output = new CommandOutput(archive, true);
+        output.append("😀AB".toCharArray(), 4);
+        CommandOutput.Page first = output.page(0, 2);
+        assertEquals("😀", first.text());
+        assertEquals(2, first.nextOffset());
+        assertTrue(first.hasMore());
+        assertEquals("AB", output.page(first.nextOffset(), 2).text());
+        assertThrows(ToolException.class, () -> output.page(1, 2));
+        assertThrows(ToolException.class, () -> output.page(0, 1));
+        output.finish();
+        assertEquals(1, Files.readAllLines(archive).size());
+        assertTrue(output.metadata().contains("archive_id:"));
+    }
+
+    @Test
+    void reportsEvictedLogRangeAndRejectsFutureOffsets() {
+        CommandOutput output = new CommandOutput(null);
+        for (int i = 0; i < 6; i++) output.append("x".repeat(10000).toCharArray(), 10000);
+        CommandOutput.Page page = output.page(0, 20);
+        assertEquals(10000, page.availableFrom());
+        assertTrue(page.truncated());
+        assertEquals(10020, page.nextOffset());
+        assertEquals("x".repeat(20), page.text());
+        assertFalse(output.page(10000, 20).truncated());
+        assertThrows(ToolException.class, () -> output.page(60001, 20));
+    }
 
     @Test
     void preservesUnicodeAcrossReadAndArchiveChunkBoundaries() throws Exception {

@@ -860,6 +860,8 @@ public final class AgentRunner {
                 - 修改已有文件优先使用 edit_file，old_text 必须精确唯一匹配；write_file 用于新建或明确的整文件重写
                 - 修改已有文件必须传 expected_version，使用 read_file 或上次写入返回的文件版本；版本不匹配时重新读取，不能沿用旧版本
                 - run_command 会真实执行命令，命令必须与任务直接相关
+                - 长时间构建或开发服务用 process_start 后台启动，用 process_poll 的 next_offset 增量读日志，process_stop 停止
+                - process_poll 的 has_more 仅表示还有日志；任务是否结束看 status。普通对话中断不会停止已启动的后台任务，切换会话或退出会清理
                 - 路径只允许在工作目录内
                 """.formatted(workspaceRoot, System.getProperty("os.name"), shell, LocalDate.now());
     }

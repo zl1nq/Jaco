@@ -266,6 +266,15 @@ class RunCommandToolTest {
                     System.exit(7);
                 }
                 case "stdin" -> System.out.println(System.in.read() == -1 ? "EOF" : "INPUT");
+                case "stream" -> {
+                    System.out.println("FIRST");
+                    System.out.flush();
+                    TimeUnit.SECONDS.sleep(1);
+                    System.out.println("SECOND");
+                    System.out.flush();
+                    TimeUnit.SECONDS.sleep(1);
+                    System.out.println("END");
+                }
                 case "cwd" -> System.out.println(Path.of(".").toRealPath());
                 case "encoding" -> System.out.write("中文输出".getBytes(Charset.forName(args[1])));
                 case "large" -> {

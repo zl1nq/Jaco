@@ -19,7 +19,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /** 非交互命令执行：有界输出、可配置超时、取消与进程树清理。 */
@@ -58,58 +57,36 @@ public final class RunCommandTool implements Tool {
         return cmd.length() > 80 ? cmd.substring(0, 80) + "…" : cmd;
     }
 
-    private record Options(String command, Path cwd, int timeout, Charset encoding) {
+    record Options(String command, Path cwd, int timeout, Charset encoding) {
     }
 
     @Override
     public PreparedToolCall prepare(JsonNode args, ToolContext ctx) {
-        if (args == null || !args.isObject()) {
-            throw new ToolException("run_command 参数必须是 JSON 对象");
-        }
-        Set<String> allowed = Set.of("command", "cwd", "timeout_seconds", "encoding");
-        args.fieldNames().forEachRemaining(field -> {
-            if (!allowed.contains(field)) {
-                throw new ToolException("未知的 run_command 参数: " + field);
-            }
-        });
-        String command = string(args, "command", null);
+        Options options = options(args, ctx, 120, 600, "run_command");
+        return new PreparedToolCall(null, () -> run(options, ctx, new CommandOutput(ctx.archiveFile())).render());
+    }
+
+    Options options(JsonNode args, ToolContext ctx, int defaultTimeout, int maxTimeout, String tool) {
+        CommandArguments.validate(args, tool, "command", "cwd", "timeout_seconds", "encoding");
+        String command = CommandArguments.string(args, "command", null);
         if (command == null) {
             throw new ToolException("command 必须提供非空白字符串");
         }
-        Path cwd = ctx.sandbox().resolve(string(args, "cwd", "."));
+        Path cwd = ctx.sandbox().resolve(CommandArguments.string(args, "cwd", "."));
         checkDirectory(cwd);
-        int timeout = 120;
-        JsonNode seconds = args.get("timeout_seconds");
-        if (seconds != null) {
-            if (!seconds.isIntegralNumber() || !seconds.canConvertToInt() || seconds.intValue() < 1 || seconds.intValue() > 600) {
-                throw new ToolException("timeout_seconds 必须是 1 到 600 的整数");
-            }
-            timeout = seconds.intValue();
-        }
+        int timeout = (int) CommandArguments.number(args, "timeout_seconds", defaultTimeout, 1, maxTimeout);
         Charset encoding;
         try {
-            encoding = Charset.forName(string(args, "encoding", Charset.defaultCharset().name()));
+            encoding = Charset.forName(CommandArguments.string(args, "encoding", Charset.defaultCharset().name()));
         } catch (IllegalArgumentException e) {
             throw new ToolException("encoding 不是支持的字符集");
         }
-        Options options = new Options(command, cwd, timeout, encoding);
-        return new PreparedToolCall(null, () -> run(options, ctx));
+        return new Options(command, cwd, timeout, encoding);
     }
 
     @Override
     public String execute(JsonNode args, ToolContext ctx) throws Exception {
         return prepare(args, ctx).execute();
-    }
-
-    private String string(JsonNode args, String field, String fallback) {
-        JsonNode value = args.get(field);
-        if (value == null) {
-            return fallback;
-        }
-        if (!value.isTextual() || value.textValue().isBlank()) {
-            throw new ToolException(field + " 必须是非空白字符串");
-        }
-        return value.textValue();
     }
 
     private void checkDirectory(Path cwd) {
@@ -118,9 +95,16 @@ public final class RunCommandTool implements Tool {
         }
     }
 
-    private String run(Options options, ToolContext ctx) throws Exception {
+    record Result(String status, Integer exitCode, long durationMs, Options options, String warning, CommandOutput output) {
+        String render() {
+            return "status: " + status + "\nexit_code: " + exitCode
+                    + "\nduration_ms: " + durationMs + "\ncwd: " + options.cwd() + "\nencoding: " + options.encoding().name()
+                    + (warning.isBlank() ? "" : "\nwarning: " + warning.strip()) + "\n" + output.render();
+        }
+    }
+
+    Result run(Options options, ToolContext ctx, CommandOutput output) throws Exception {
         long start = System.nanoTime();
-        CommandOutput output = new CommandOutput(ctx.archiveFile());
         String status = "cancelled";
         Integer exitCode = null;
         String warning = "";
@@ -145,6 +129,8 @@ public final class RunCommandTool implements Tool {
                     reader.start();
                     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(options.timeout());
                     while (true) {
+                        // 后台任务可能持续数小时，只保留仍存活的子进程，避免历史句柄无界增长。
+                        descendants.values().removeIf(child -> !child.isAlive());
                         for (ProcessHandle child : ProcessTree.descendants(process)) {
                             descendants.put(child.pid(), child);
                         }
@@ -223,10 +209,7 @@ public final class RunCommandTool implements Tool {
                 Thread.currentThread().interrupt();
             }
         }
-        return "status: " + status + "\nexit_code: " + (exitCode == null ? "null" : exitCode)
-                + "\nduration_ms: " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
-                + "\ncwd: " + options.cwd() + "\nencoding: " + options.encoding().name()
-                + (warning.isBlank() ? "" : "\nwarning: " + warning.strip()) + "\n" + output.render();
+        return new Result(status, exitCode, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start), options, warning, output);
     }
 
     private boolean cancelled(ToolContext ctx) {

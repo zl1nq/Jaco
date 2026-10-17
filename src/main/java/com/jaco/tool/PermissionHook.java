@@ -35,7 +35,7 @@ public final class PermissionHook implements AgentHook {
             Pattern.compile("\\b(shutdown|reboot|poweroff)\\b"),
             Pattern.compile(":\\(\\)\\s*\\{\\s*:\\|:&\\s*\\};:"));              // fork bomb
 
-    private static final Set<String> READ_ONLY = Set.of("read_file", "list_dir", "grep", "find_files", "recall");
+    private static final Set<String> READ_ONLY = Set.of("read_file", "list_dir", "grep", "find_files", "recall", "process_poll");
 
     private final Set<String> sessionAllowed = ConcurrentHashMap.newKeySet();
 
@@ -97,8 +97,9 @@ public final class PermissionHook implements AgentHook {
         return switch (call.function().name()) {
             case "write_file" -> "写入文件 " + extractArg(call, "path");
             case "edit_file" -> "局部修改文件 " + extractArg(call, "path");
-            case "run_command" -> "执行命令: " + extractArg(call, "command")
+            case "run_command", "process_start" -> "执行命令: " + extractArg(call, "command")
                     + "\n执行参数: " + call.function().arguments();
+            case "process_stop" -> "停止后台任务: " + extractArg(call, "task_id");
             default -> String.valueOf(call.function().arguments());
         };
     }

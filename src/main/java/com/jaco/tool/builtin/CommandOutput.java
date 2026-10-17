@@ -2,6 +2,7 @@ package com.jaco.tool.builtin;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jaco.session.SessionStore;
+import com.jaco.tool.ToolException;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -16,6 +17,7 @@ final class CommandOutput {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final Path archive;
+    private final boolean archiveAll;
     private final String id = "command-" + UUID.randomUUID();
     private final StringBuilder tail = new StringBuilder();
     private final StringBuilder pending = new StringBuilder();
@@ -29,7 +31,12 @@ final class CommandOutput {
     private boolean finished;
 
     CommandOutput(Path archive) {
+        this(archive, false);
+    }
+
+    CommandOutput(Path archive, boolean archiveAll) {
         this.archive = archive;
+        this.archiveAll = archiveAll;
     }
 
     synchronized boolean append(char[] chars, int length) {
@@ -48,7 +55,7 @@ final class CommandOutput {
         int keep = Math.min(length, ARCHIVE_LIMIT - stored - pending.length());
         pending.append(chars, 0, keep);
         archiveLimited |= keep < length;
-        if (total > PREVIEW_LIMIT && archive != null) {
+        if ((archiveAll || total > PREVIEW_LIMIT) && archive != null) {
             try {
                 archiving = true;
                 while (pending.length() >= CHUNK_SIZE) {
@@ -105,13 +112,13 @@ final class CommandOutput {
         }
     }
 
-    synchronized String render() {
+    synchronized String metadata() {
         StringBuilder result = new StringBuilder("output_chars: " + total
                 + "\noutput_truncated: " + (total > PREVIEW_LIMIT) + "\n");
-        if (total > PREVIEW_LIMIT) {
-            if (archive != null && stored > 0) {
+        if (total > PREVIEW_LIMIT || archiveAll) {
+            if (archive != null && (stored > 0 || (archiveAll && archiveError == null))) {
                 result.append("archive_id: ").append(id).append("\narchive_truncated: ").append(archiveLimited)
-                        .append("\n(用 recall 的 query 检索 archive_id，再按 entry_id 读取各 part 原文)\n");
+                        .append("\n(用 recall 的 query 检索 archive_id，再按 entry_id 读取各 part；未满块的日志在结束时归档)\n");
             } else {
                 result.append("(无可用输出归档，仅保留末尾预览)\n");
             }
@@ -125,10 +132,48 @@ final class CommandOutput {
         if (readError != null) {
             result.append("(输出读取不完整: ").append(readError).append(")\n");
         }
+        return result.toString();
+    }
+
+    synchronized String render() {
         String text = tail.toString();
         if (!text.isEmpty() && Character.isLowSurrogate(text.charAt(0))) {
             text = text.substring(1);
         }
-        return result.append('\n').append(text.isBlank() ? "(no output)" : text).toString();
+        return metadata() + "\n" + (text.isBlank() ? "(no output)" : text);
+    }
+
+    record Page(long total, long availableFrom, long nextOffset, boolean truncated, boolean hasMore, String text, String metadata) {
+    }
+
+    /** 偏移为整个输出的 UTF-16 字符位置；缓冲淘汰后明确返回实际起点，不静默丢失日志。 */
+    synchronized Page page(long offset, int limit) {
+        if (offset > total) {
+            throw new ToolException("offset 超过当前输出长度 " + total);
+        }
+        long base = total - tail.length();
+        long available = base;
+        if (!tail.isEmpty() && Character.isLowSurrogate(tail.charAt(0))) {
+            available++;
+        }
+        long start = Math.max(offset, available);
+        int from = (int) (start - base);
+        if (from < tail.length() && from > 0 && Character.isLowSurrogate(tail.charAt(from))
+                && Character.isHighSurrogate(tail.charAt(from - 1))) {
+            throw new ToolException("offset 位于 Unicode 字符中间，请使用上次返回的 next_offset");
+        }
+        int end = (int) Math.min(tail.length(), (long) from + limit);
+        if (end > from && Character.isHighSurrogate(tail.charAt(end - 1))) {
+            end--;
+        }
+        if (end == from && from < tail.length() && limit < 2) {
+            throw new ToolException("limit 太小，读取完整 Unicode 字符至少需要 2");
+        }
+        return new Page(total, available, base + end, offset < available, base + end < total,
+                tail.substring(from, end), metadata());
+    }
+
+    synchronized long length() {
+        return total;
     }
 }
