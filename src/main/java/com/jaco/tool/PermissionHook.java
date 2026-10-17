@@ -1,5 +1,7 @@
 package com.jaco.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.jaco.agent.TurnEvent;
 import com.jaco.agent.TurnEventSink;
 import com.jaco.hook.AgentHook;
@@ -21,6 +23,8 @@ import java.util.regex.Pattern;
  */
 public final class PermissionHook implements AgentHook {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     /** 无条件拒绝的命令模式，y/a/n 都无法放行。 */
     private static final List<Pattern> DENY_PATTERNS = List.of(
             Pattern.compile("rm\\s+(-[a-zA-Z]*[rf][a-zA-Z]*\\s+)+/\\s*$"),      // rm -rf /
@@ -35,17 +39,19 @@ public final class PermissionHook implements AgentHook {
             Pattern.compile("\\b(shutdown|reboot|poweroff)\\b"),
             Pattern.compile(":\\(\\)\\s*\\{\\s*:\\|:&\\s*\\};:"));              // fork bomb
 
-    private static final Set<String> READ_ONLY = Set.of("read_file", "list_dir", "grep", "find_files", "recall", "process_poll");
+    private static final Set<String> READ_ONLY = Set.of("read_file", "list_dir", "grep", "find_files", "recall", "process_poll", "git_status", "git_diff");
 
     private final Set<String> sessionAllowed = ConcurrentHashMap.newKeySet();
 
     @Override
     public HookVerdict onBeforeToolCall(ToolCall call) {
         String name = call.function().name();
-        String args = String.valueOf(call.function().arguments());
-        for (Pattern p : DENY_PATTERNS) {
-            if (p.matcher(args).find()) {
-                return HookVerdict.deny("命中危险命令黑名单: " + p.pattern());
+        if (name.equals("run_command") || name.equals("process_start")) {
+            String command = extractArg(call, "command");
+            for (Pattern p : DENY_PATTERNS) {
+                if (p.matcher(command).find()) {
+                    return HookVerdict.deny("命中危险命令黑名单: " + p.pattern());
+                }
             }
         }
         if (READ_ONLY.contains(name) || sessionAllowed.contains(name)) {
@@ -106,7 +112,7 @@ public final class PermissionHook implements AgentHook {
 
     private String extractArg(ToolCall call, String key) {
         try {
-            var args = new com.fasterxml.jackson.databind.ObjectMapper().readTree(call.function().arguments());
+            var args = MAPPER.readTree(call.function().arguments());
             return args.path(key).asText(String.valueOf(call.function().arguments()));
         } catch (Exception e) {
             return String.valueOf(call.function().arguments());

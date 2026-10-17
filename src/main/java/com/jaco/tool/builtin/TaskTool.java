@@ -32,7 +32,7 @@ public final class TaskTool implements Tool {
 
     @Override
     public String description() {
-        return "委派一个只读子 agent 独立调查任务（只能读文件、grep、find_files、列目录、查归档），它返回最终结论报告。"
+        return "委派一个只读子 agent 独立调查任务（只能读文件、grep、find_files、只读 Git 查询、列目录、查归档），它返回最终结论报告。"
                 + "适合大范围搜索、代码调研等中间输出很多的场景；子任务的过程不占用本对话上下文。";
     }
 

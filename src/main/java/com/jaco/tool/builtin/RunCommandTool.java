@@ -104,6 +104,12 @@ public final class RunCommandTool implements Tool {
     }
 
     Result run(Options options, ToolContext ctx, CommandOutput output) throws Exception {
+        return run(options, ctx, output, null, Map.of());
+    }
+
+    /** 固定参数的本机只读工具可绕过 shell，复用同一套执行、输出及清理逻辑。 */
+    Result run(Options options, ToolContext ctx, CommandOutput output, List<String> directCommand,
+               Map<String, String> environment) throws Exception {
         long start = System.nanoTime();
         String status = "cancelled";
         Integer exitCode = null;
@@ -114,13 +120,23 @@ public final class RunCommandTool implements Tool {
         Map<Long, ProcessHandle> descendants = new LinkedHashMap<>();
         try {
             if (!cancelled(ctx)) {
-                List<String> command = shellPrefix(ctx.shellChoice());
-                command.add(options.command());
+                List<String> command;
+                if (directCommand == null) {
+                    command = shellPrefix(ctx.shellChoice());
+                    command.add(options.command());
+                } else {
+                    command = new ArrayList<>(directCommand);
+                }
                 // 审批期间目录可能改变，启动前再次检查。
                 Path cwd = ctx.sandbox().resolve(options.cwd().toString());
                 checkDirectory(cwd);
                 if (!cancelled(ctx)) {
-                    process = new ProcessBuilder(command).directory(cwd.toFile()).redirectErrorStream(true).start();
+                    ProcessBuilder builder = new ProcessBuilder(command).directory(cwd.toFile()).redirectErrorStream(true);
+                    environment.forEach((key, value) -> {
+                        if (value == null) builder.environment().remove(key);
+                        else builder.environment().put(key, value);
+                    });
+                    process = builder.start();
                     ctx.currentProcess().set(process);
                     process.getOutputStream().close();
                     Process running = process;

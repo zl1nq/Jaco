@@ -170,6 +170,8 @@ java -jar /path/to/jaco/target/jaco.jar
 | `read_file` | 带行号读取文件，支持分页 | 自动放行 |
 | `list_dir` | 浏览目录 | 自动放行 |
 | `grep` | 搜索文件内容 | 自动放行 |
+| `git_status` | 查看分支描述、暂存区、工作区和未跟踪文件状态 | 自动放行 |
+| `git_diff` | 查看工作区或暂存区的补丁差异 | 自动放行 |
 | `find_files` | 按文件名或相对路径 glob 定位文件 | 自动放行 |
 | `recall` | 搜索当前会话归档、预览命中片段，按条目 ID 分页读取原文 | 自动放行 |
 | `write_file` | 严格校验参数后，以 UTF-8 原子新建或覆盖文件 | 需确认 |
@@ -188,7 +190,7 @@ java -jar /path/to/jaco/target/jaco.jar
 | `a` | 在当前会话内允许该工具的后续调用 |
 | `n` | 拒绝调用，拒绝结果反馈给模型 |
 
-命中危险命令黑名单的调用会直接拒绝，不能通过 `y` 或 `a` 放行。
+`run_command` 和 `process_start` 的命令命中危险命令黑名单时会直接拒绝，不能通过 `y` 或 `a` 放行。只读查询的文件名和路径不会按命令匹配黑名单。
 
 `write_file` 接受 `path`、`content` 和 `expected_version`：路径必须是非空白字符串，内容必须显式提供字符串（空字符串表示空文件）。写入先在目标目录生成临时文件，完成后原子替换目标；失败时尝试清理临时文件。文件系统不支持原子替换时会报错，不降级为直接覆盖。已有文件的 POSIX 权限在支持的平台上保留。
 
@@ -228,7 +230,15 @@ stdout/stderr 合并后持续读取，内存最多保留末尾 50,000 字符预�
 
 `grep.pattern` 默认是 Java 正则，`literal: true` 切换为普通文本，`ignore_case: true` 忽略大小写。`context_lines` 可设 0–10，默认 0；上限按命中行计算，上下文行不计入且重叠部分不重复输出。命中行格式为 `路径:行号: 内容`，上下文为 `路径-行号- 内容`。文本按 UTF-8 逐行读取，前 8192 字节存在零字节的文件按二进制跳过；长行围绕命中位置展示约 200 个字符并标明列号（Java UTF-16 单位），完整内容可用 `read_file` 查看。两个搜索工具均支持取消；不支持跨行正则匹配。
 
-子 agent 只能使用 `read_file`、`list_dir`、`grep`、`find_files`、`recall`，不能写文件、执行命令或递归创建子 agent；中间探索过程不进入父会话上下文，最终报告作为工具结果返回。
+`git_status` 和 `git_diff` 直接通过参数列表启动本机 `git`，不经过 CMD、PowerShell 或 Bash，需要已安装 Git 并加入 PATH。`repo_path` 默认工作目录，可指定仓库内子目录；工具会解析仓库根目录，并确认其位于工作目录或 `workspace.extra_roots` 内。如果工作目录只是仓库的一部分，需要显式允许仓库根目录。两者都支持 `paths`，为最多 100 项的仓库根相对字面路径；不解释 glob 或 Git pathspec 魔法，不允许绝对路径和仓库外路径。
+
+`git_status` 默认包含未跟踪文件，可用 `include_untracked: false` 排除；`max_entries` 默认 200，范围 1–1000。返回分支描述及逐行 JSON 状态记录：`index_status` 是暂存区状态，`worktree_status` 是工作区状态，空格表示没有变化，`?` 表示未跟踪；重命名或复制记录还包含 `original_path`。底层使用 `--porcelain=v1 -z`，不会把带空格、中文或特殊字符的文件名拆成多项。`clean` 仅表示本次过滤范围没有变化；`status_truncated` 表示条数、200,000 字符原始捕获上限或工具回填预算导致列表不完整，不会将不完整结果报告为干净工作区。
+
+`git_diff` 默认比较工作区与暂存区，`staged: true` 比较暂存区与 HEAD，也支持尚无首次提交的仓库。`context_lines` 默认 3，范围 0–20；`max_chars` 默认 8000，范围 1000–50000，同时受工具回填预算约束。返回从补丁开头截取的预览及 `diff_truncated` 标志；未跟踪文件不包含在补丁中，可先用 `git_status` 定位，再用文件工具读取。
+
+Git 查询禁用分页器、颜色、可选索引锁、外部 diff、textconv、文件监控钩子和已配置的 clean/process 过滤器，并忽略子模块内部变化；只在当前调用使用配置覆盖，不修改仓库配置。为避免执行外部程序，结果可能与配置了自定义过滤器的普通 Git 视图有所不同。继承的 `GIT_*` 环境变量会清除，防止环境重定向仓库或写入 trace 文件。每条本机 Git 调用有 30 秒超时，支持取消和进程树清理。Git 自身会读取仓库元数据，这不是操作系统级沙箱。查询输出也分块存入当前会话归档（最多前 2,000,000 字符），可用 `archive_id` 通过 `recall` 检索；原始状态归档使用 NUL 分隔。未安装 Git、非仓库路径、执行失败或超时会明确报错。
+
+子 agent 只能使用 `read_file`、`list_dir`、`grep`、`find_files`、`recall`、`git_status`、`git_diff`，不能写文件、执行任意 shell 命令或递归创建子 agent；中间探索过程不进入父会话上下文，最终报告作为工具结果返回。
 
 ## 配置参考
 
@@ -303,7 +313,7 @@ JACO 用两层机制控制发送给模型的上下文体积：
 | `tui` | 基于 JLine 3 的 REPL，消费 `TurnEvent`，处理渲染、确认、命令和中断 |
 | `agent` | `AgentRunner` 驱动工具循环与只读子 agent；`ContextCompactor` 管理压缩与归档 |
 | `llm` | 手写 OpenAI 兼容 SSE 客户端，处理流式响应、工具调用增量、重试和取消 |
-| `tool` | 工具接口与注册表、12 个内置工具、后台任务管理、权限钩子和文件路径沙箱 |
+| `tool` | 工具接口与注册表、14 个内置工具、后台任务管理、权限钩子和文件路径沙箱 |
 | `render` | Markdown 流式渲染、代码高亮、表格对齐与 CJK 显示宽度计算 |
 | `hook` | agent 生命周期钩子，可接入权限、审计与续轮逻辑 |
 | `session` | 会话 JSON 保存、恢复与 JSONL 归档 |

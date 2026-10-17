@@ -18,6 +18,8 @@ final class CommandOutput {
 
     private final Path archive;
     private final boolean archiveAll;
+    private final int prefixLimit;
+    private final StringBuilder prefix = new StringBuilder();
     private final String id = "command-" + UUID.randomUUID();
     private final StringBuilder tail = new StringBuilder();
     private final StringBuilder pending = new StringBuilder();
@@ -35,8 +37,13 @@ final class CommandOutput {
     }
 
     CommandOutput(Path archive, boolean archiveAll) {
+        this(archive, archiveAll, 0);
+    }
+
+    CommandOutput(Path archive, boolean archiveAll, int prefixLimit) {
         this.archive = archive;
         this.archiveAll = archiveAll;
+        this.prefixLimit = prefixLimit;
     }
 
     synchronized boolean append(char[] chars, int length) {
@@ -44,6 +51,7 @@ final class CommandOutput {
             return false;
         }
         total += length;
+        prefix.append(chars, 0, Math.min(length, prefixLimit - prefix.length()));
         tail.append(chars, 0, length);
         if (tail.length() > PREVIEW_LIMIT) {
             tail.delete(0, tail.length() - PREVIEW_LIMIT);
@@ -175,5 +183,13 @@ final class CommandOutput {
 
     synchronized long length() {
         return total;
+    }
+
+    synchronized String prefix() {
+        return prefix.toString();
+    }
+
+    synchronized boolean readIncomplete() {
+        return readError != null;
     }
 }

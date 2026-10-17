@@ -51,11 +51,11 @@ public final class AgentRunner {
             """;
 
     /** 子 agent 的只读工具集；不含 task（禁止递归 spawn）与写/执行类工具。 */
-    private static final Set<String> SUBAGENT_TOOLS = Set.of("read_file", "list_dir", "grep", "find_files", "recall");
+    private static final Set<String> SUBAGENT_TOOLS = Set.of("read_file", "list_dir", "grep", "find_files", "recall", "git_status", "git_diff");
 
     private static final String SUBAGENT_SYSTEM_PROMPT = """
             你是 jaco 的子 agent，被主 agent 委派执行一个只读调查任务。
-            你只能读取与搜索，不能修改任何文件、不能执行命令。高效探索，不要漫无目的。
+            你只能读取、搜索及使用只读 Git 工具，不能修改文件、不能执行任意 shell 命令。高效探索，不要漫无目的。
             完成后输出结论报告：直接给答案与证据（文件路径:行号 等可验证引用），不要过程叙述，不要寒暄。
             """;
 
@@ -856,6 +856,7 @@ public final class AgentRunner {
 
                 # 工具使用守则
                 - 按文件名或路径定位文件用 find_files，搜索文件内容用 grep，查看单层目录用 list_dir
+                - 查看仓库状态用 git_status，查看未暂存或已暂存差异用 git_diff；paths 是相对仓库根的字面路径
                 - 修改文件前先 read_file 了解现状；大文件用 offset/limit 分页读取
                 - 修改已有文件优先使用 edit_file，old_text 必须精确唯一匹配；write_file 用于新建或明确的整文件重写
                 - 修改已有文件必须传 expected_version，使用 read_file 或上次写入返回的文件版本；版本不匹配时重新读取，不能沿用旧版本

@@ -12,6 +12,8 @@ import com.jaco.tool.PermissionHook;
 import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
 import com.jaco.tool.builtin.GrepTool;
+import com.jaco.tool.builtin.GitStatusTool;
+import com.jaco.tool.builtin.GitDiffTool;
 import com.jaco.tool.builtin.BackgroundProcessManager;
 import com.jaco.tool.builtin.ProcessStartTool;
 import com.jaco.tool.builtin.ProcessPollTool;
@@ -73,6 +75,8 @@ public final class Main {
         registry.register(new ProcessPollTool(background));
         registry.register(new ProcessStopTool(background));
         registry.register(new GrepTool());
+        registry.register(new GitStatusTool());
+        registry.register(new GitDiffTool());
         registry.register(new FindFilesTool());
         registry.register(new RecallTool());
         com.jaco.tool.builtin.TaskTool taskTool = new com.jaco.tool.builtin.TaskTool();
