@@ -25,12 +25,18 @@ final class FileChange {
         String before = text(original);
         String preview = "基于文件版本: " + (original == null ? "不存在（新建）" : FileVersion.of(original))
                 + "\n" + FileDiff.render(file.toString(), original == null, before, updated);
+        return prepare(file, original, before, updated, operation, preview, () -> {});
+    }
+
+    static PreparedToolCall prepare(Path file, byte[] original, String before, String updated,
+                                    String operation, String preview, Runnable check) {
         return new PreparedToolCall(preview, () -> {
-            AtomicFileWriter.checkUnchanged(file, original);
+            check.run();
+            AtomicFileWriter.checkUnchanged(file, original, check);
             if (original != null && before.equals(updated)) {
                 return "无需修改 " + file + "（内容相同）\n文件版本: " + FileVersion.of(original);
             }
-            long size = AtomicFileWriter.write(file, updated, original);
+            long size = AtomicFileWriter.write(file, updated, original, check);
             return operation + " " + file + "（" + (original == null ? 0 : original.length)
                     + " 字节 → " + size + " 字节）\n文件版本: " + FileVersion.of(updated.getBytes(StandardCharsets.UTF_8));
         });
