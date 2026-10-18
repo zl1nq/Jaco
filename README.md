@@ -20,6 +20,10 @@
 
 ## 快速开始
 
+直接运行release目录下的jar包，需要 **JDK 21 或更高版本：**
+> java -jar .\release\jaco.jar
+
+**也可以选择自己构建，步骤如下：**
 ### 1. 构建
 
 需要 **JDK 21 或更高版本**和 **Maven**。在项目根目录执行：
@@ -52,7 +56,7 @@ providers:
     temperature: 0.7
 ```
 
-在启动 JACO 的终端中设置 API Key。
+可以直接在配置文件中配置 API Key 或者在启动 JACO 的终端中设置 API Key。
 
 **PowerShell：**
 
