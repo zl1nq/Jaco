@@ -24,12 +24,14 @@ import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -367,14 +369,7 @@ public final class AgentRunner {
             session = session.withFirstPromptTitle(prompt);
             session.messages().add(Message.user(effective));
 
-            // 压缩检查发生在轮开始（循环外一层，循环本体不感知）
             ContextCompactor compactor = new ContextCompactor(sessions, session, contextLimit);
-            var outcome = compactor.compactIfNeeded(session.messages(), lastPromptTokens,
-                    notice -> handle.emit(new TurnEvent.Notice(notice)), this::summarizeOldMessages);
-            if (outcome.compacted()) {
-                sessions.save(session);
-                lastPromptTokens = outcome.tokensAfter();
-            }
 
             Usage totalUsage = null;
             String finishReason = null;
@@ -390,6 +385,13 @@ public final class AgentRunner {
                 }
                 ChatStream stream = null;
                 try {
+                    var outcome = compactContext(compactor, session.messages(), lastPromptTokens, false,
+                            notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
+                    if (outcome.compacted()) {
+                        sessions.save(session);
+                        lastPromptTokens = outcome.tokensAfter();
+                    }
+                    if (handle.isCancelled()) { interrupted = true; break; }
                     ChatRequest request = new ChatRequest(
                             provider.model(),
                             buildMessages(),
@@ -410,8 +412,12 @@ public final class AgentRunner {
                         // 上下文超限是可恢复的：强制压缩后重试一次（估算与真实 token 的偏差兜底）
                         if (!overflowRetried && isContextOverflow(result.error())) {
                             overflowRetried = true;
-                            var forced = compactor.forceCompact(session.messages(),
-                                    notice -> handle.emit(new TurnEvent.Notice(notice)), this::summarizeOldMessages);
+                            var forced = compactContext(compactor, session.messages(), 0, true,
+                                    notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
+                            if (!forced.compacted()) {
+                                error = new IOException("上下文超限，压缩未能缩小请求；已保留当前进展", result.error());
+                                break;
+                            }
                             lastPromptTokens = forced.tokensAfter();
                             sessions.save(session);
                             continue;
@@ -447,6 +453,16 @@ public final class AgentRunner {
                         break;
                     }
                 } catch (IOException e) {
+                    if (!overflowRetried && isContextOverflow(e)) {
+                        overflowRetried = true;
+                        var forced = compactContext(compactor, session.messages(), 0, true,
+                                notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
+                        if (forced.compacted()) {
+                            lastPromptTokens = forced.tokensAfter();
+                            sessions.save(session);
+                            continue;
+                        }
+                    }
                     error = e;
                     break;
                 } catch (InterruptedException e) {
@@ -493,7 +509,7 @@ public final class AgentRunner {
     /**
      * 子 agent 入口（由 TaskTool 调用，运行在父 loop 线程）：子 loop 跑在虚拟线程上，
      * 本线程同步等待；父轮取消的中断会到达本线程，此时 interrupt 子线程并限时收尸。
-     * 子 agent 有独立消息列表（不进 session、不写父归档），只有最终报告回到父模型。
+     * 子 agent 有独立运行状态及归档（不写父会话消息或父归档），只有最终报告回到父模型。
      * 开始/结束各发一行 Notice（经父 loop 线程的事件槽），中间保持静默。
      */
     public String runSubagent(String prompt, BooleanSupplier cancelled) {
@@ -537,25 +553,39 @@ public final class AgentRunner {
         return out != null ? out : "(子任务被中断)";
     }
 
-    /** 子 agent 的精简 loop：无压缩、无 session、无事件；撞错/被取消都以文案终态返回。 */
+    /** 子任务使用独立、非会话列表项的运行状态，压缩和 recall 共用其归档。 */
     private String subagentLoop(String prompt, BooleanSupplier cancelled, AtomicInteger iterations) {
-        List<Message> messages = new ArrayList<>();
+        Session child = Session.create(session.id() + "-sub-" + UUID.randomUUID(), System.currentTimeMillis());
+        List<Message> messages = child.messages();
         messages.add(Message.system(SUBAGENT_SYSTEM_PROMPT));
         messages.add(Message.user(prompt));
         List<ToolDefinition> defs = registry.definitions(SUBAGENT_TOOLS);
+        ContextCompactor compactor = new ContextCompactor(sessions, child, contextLimit);
+        long promptTokens = 0;
+        boolean overflowRetried = false;
         try {
             for (int i = 0; i < maxIterations && !cancelled.getAsBoolean(); i++) {
                 iterations.set(i + 1);
                 ChatStream stream = null;
                 try {
-                    ChatRequest request = new ChatRequest(provider.model(), messages, provider.temperature(),
+                    var outcome = compactContext(compactor, messages, promptTokens, false, n -> {}, cancelled);
+                    if (outcome.compacted()) promptTokens = outcome.tokensAfter();
+                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) return "(子任务被中断)";
+                    ChatRequest request = new ChatRequest(provider.model(), List.copyOf(messages), provider.temperature(),
                             true, new ChatRequest.StreamOptions(true), defs);
                     hooks.onBeforeRequest(request);
                     stream = client.chatStream(request);
                     IterationResult result = consumeStream(stream, null, cancelled);
+                    if (result.usage() != null) promptTokens = result.usage().promptTokens();
                     if (result.error() != null) {
-                        return "子任务失败: " + (result.error().getMessage() != null
-                                ? result.error().getMessage() : result.error().getClass().getSimpleName());
+                        if (!overflowRetried && isContextOverflow(result.error())) {
+                            overflowRetried = true;
+                            var forced = compactContext(compactor, messages, 0, true, n -> {}, cancelled);
+                            if (forced.compacted()) { promptTokens = forced.tokensAfter(); continue; }
+                            return subagentFailure("上下文超限，压缩未能缩小请求", messages);
+                        }
+                        return subagentFailure(result.error().getMessage() != null
+                                ? result.error().getMessage() : result.error().getClass().getSimpleName(), messages);
                     }
                     if (cancelled.getAsBoolean()) {
                         return "(子任务被中断)";
@@ -566,7 +596,14 @@ public final class AgentRunner {
                     }
                     messages.add(new Message(Role.ASSISTANT,
                             result.content().isEmpty() ? null : result.content(), calls, null, null));
-                    executeSubagentTools(calls, messages, cancelled);
+                    executeSubagentTools(calls, child, cancelled);
+                } catch (IOException e) {
+                    if (!overflowRetried && isContextOverflow(e)) {
+                        overflowRetried = true;
+                        var forced = compactContext(compactor, messages, 0, true, n -> {}, cancelled);
+                        if (forced.compacted()) { promptTokens = forced.tokensAfter(); continue; }
+                    }
+                    return subagentFailure(e.getMessage(), messages);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return "(子任务被中断)";
@@ -576,16 +613,28 @@ public final class AgentRunner {
                     }
                 }
             }
-        } catch (IOException e) {
-            return "子任务失败: " + e.getMessage();
+        } catch (RuntimeException e) {
+            return subagentFailure(e.getMessage(), messages);
         }
-        return cancelled.getAsBoolean() ? "(子任务被中断)" : "(子任务达到迭代上限 " + maxIterations + ")";
+        return cancelled.getAsBoolean() ? "(子任务被中断)" : subagentFailure("达到迭代上限 " + maxIterations, messages);
     }
 
-    /** 子 agent 的工具执行：白名单外的调用直接拒绝回喂；超限只留头尾预览（不写父归档）。 */
-    private void executeSubagentTools(List<ToolCall> calls, List<Message> messages, BooleanSupplier cancelled) {
+    private String subagentFailure(String reason, List<Message> messages) {
+        StringBuilder progress = new StringBuilder("子任务失败: ").append(unicodePrefix(String.valueOf(reason), 512));
+        int start = Math.max(0, messages.size() - 6);
+        for (int i = start; i < messages.size(); i++) {
+            Message m = messages.get(i);
+            if ((m.role() == Role.ASSISTANT || m.role() == Role.TOOL) && m.content() != null && !m.content().isBlank()) {
+                progress.append("\n部分进展（资料）: ").append(unicodePrefix(m.content(), 500));
+            }
+        }
+        return progress.toString();
+    }
+
+    /** 子 agent 的工具执行：归档及 recall 严格使用本次子任务的运行状态。 */
+    private void executeSubagentTools(List<ToolCall> calls, Session child, BooleanSupplier cancelled) {
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
-                new AtomicReference<>(), cancelled, sessions.archivePath(session), maxToolResultChars);
+                new AtomicReference<>(), cancelled, sessions.archivePath(child), maxToolResultChars);
         for (ToolCall call : calls) {
             String name = call.function().name() != null ? call.function().name() : "?";
             String result;
@@ -593,6 +642,7 @@ public final class AgentRunner {
                 result = "ERROR: 子 agent 只允许只读工具 " + SUBAGENT_TOOLS;
             } else {
                 try {
+                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new InterruptedException();
                     result = registry.execute(call, ctx);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -601,10 +651,8 @@ public final class AgentRunner {
                     result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
                 }
             }
-            if (result.length() > maxToolResultChars) {
-                result = clipMiddle(result, maxToolResultChars / 2);
-            }
-            messages.add(Message.toolResult(call.id(), result));
+            result = gateToolResult(child, result);
+            child.messages().add(Message.toolResult(call.id(), result));
         }
     }
 
@@ -691,7 +739,7 @@ public final class AgentRunner {
                 result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
                 ok = false;
             }
-            result = gateToolResult(result);
+            result = gateToolResult(session, result);
             session.messages().add(Message.toolResult(call.id(), result));
             hooks.onAfterToolCall(call, result);
             handle.emit(new TurnEvent.ToolCallEnd(name, ok, summarizeResult(result)));
@@ -702,23 +750,60 @@ public final class AgentRunner {
      * 单条工具输出的硬闸门：超限即整条落盘归档，回填头尾预览。在结果入口处生效，
      * 不依赖轮开始的压缩周期——任何时刻消息列表里的单条 tool_result 都有上界。
      */
-    private String gateToolResult(String result) {
+    private String gateToolResult(Session owner, String result) {
         if (result.length() <= maxToolResultChars) {
             return result;
         }
-        sessions.appendArchivedOutput(session, result);
-        return clipMiddle(result, maxToolResultChars / 2);
+        String status;
+        try {
+            sessions.appendArchivedOutput(owner, result);
+            status = "工具输出过长，完整内容已归档，可用 recall 检索";
+        } catch (UncheckedIOException e) {
+            log.warn("工具输出归档失败: {}", e.getMessage());
+            status = "工具输出过长，归档失败；仅保留预览，无法恢复，请缩小范围重新读取";
+        }
+        return clipMiddle(result, maxToolResultChars, status);
     }
 
-    /** 头尾各留 keepEach 字符，中段以省略标记代替，并注明完整内容可 recall。 */
-    static String clipMiddle(String text, int keepEach) {
-        int head = Math.min(keepEach, text.length());
-        int tail = Math.min(keepEach, text.length());
-        return "(工具输出过大已存档，共 " + text.length() + " 字符，保留头尾各 " + head
-                + " 字符；完整内容可用 recall 工具取回)\n"
-                + text.substring(0, head)
-                + "\n…(中间省略)…\n"
-                + text.substring(text.length() - tail);
+    /** 纯裁剪不承诺归档；提示、分隔符和 Unicode 边界都计入总预算。 */
+    static String clipMiddle(String text, int budget) {
+        return clipMiddle(text, budget, "工具输出过长，仅保留头尾预览");
+    }
+
+    private static String clipMiddle(String text, int budget, String status) {
+        if (text.length() <= budget) return text;
+        String header = "(" + status + "，原 " + text.length() + " 字符)\n";
+        String gap = "\n…(中间省略)…\n";
+        if (header.length() + gap.length() > budget) return unicodePrefix("(结果已裁剪)", Math.max(0, budget));
+        int available = budget - header.length() - gap.length();
+        String head = unicodePrefix(text, available / 2);
+        int tailStart = text.length() - (available - available / 2);
+        if (tailStart < text.length() && tailStart > 0 && Character.isLowSurrogate(text.charAt(tailStart))
+                && Character.isHighSurrogate(text.charAt(tailStart - 1))) tailStart++;
+        return header + head + gap + text.substring(tailStart);
+    }
+
+    private static String unicodePrefix(String text, int limit) {
+        int end = Math.min(text.length(), limit);
+        if (end > 0 && end < text.length() && Character.isHighSurrogate(text.charAt(end - 1))
+                && Character.isLowSurrogate(text.charAt(end))) end--;
+        return text.substring(0, end);
+    }
+
+    private ContextCompactor.Outcome compactContext(ContextCompactor compactor, List<Message> messages,
+            long promptTokens, boolean forced, java.util.function.Consumer<String> notices, BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+            long tokens = ContextCompactor.estimateTokens(messages);
+            return new ContextCompactor.Outcome(false, tokens, tokens);
+        }
+        try {
+            return forced ? compactor.forceCompact(messages, notices, old -> summarizeOldMessages(old, cancelled))
+                    : compactor.compactIfNeeded(messages, promptTokens, notices, old -> summarizeOldMessages(old, cancelled));
+        } catch (UncheckedIOException e) {
+            notices.accept("上下文归档失败，保留现有消息：" + e.getMessage());
+            long tokens = ContextCompactor.estimateTokens(messages);
+            return new ContextCompactor.Outcome(false, tokens, tokens);
+        }
     }
 
     private String summarizeResult(String result) {
@@ -749,10 +834,13 @@ public final class AgentRunner {
                 a.totalTokens() + b.totalTokens());
     }
 
-    /** 压缩第 ④ 步的摘要调用：同步消费一次流式请求。失败时抛出，由压缩器降级为归档标记。 */
-    private String summarizeOldMessages(List<Message> oldMessages) {
+    /** 有界、可取消的摘要调用；失败时由压缩器降级为已归档内容的线索。 */
+    private String summarizeOldMessages(List<Message> oldMessages, BooleanSupplier cancelled) {
         StringBuilder transcript = new StringBuilder();
+        int inputLimit = (int) Math.min(12000, Math.max(0, contextLimit / 3));
+        if (inputLimit < 128) throw new IllegalStateException("摘要输入预算不足");
         for (Message m : oldMessages) {
+            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new IllegalStateException("摘要被取消");
             String who = switch (m.role()) {
                 case USER -> "用户";
                 case ASSISTANT -> "assistant";
@@ -778,6 +866,7 @@ public final class AgentRunner {
                 text = text.substring(0, 4000) + "…(截断)";
             }
             transcript.append(who).append(": ").append(text.replace('\n', ' ')).append("\n");
+            if (transcript.length() >= inputLimit) break;
         }
         ChatRequest request = new ChatRequest(
                 provider.model(),
@@ -786,18 +875,23 @@ public final class AgentRunner {
                                 你是对话摘要器。把对话历史总结成结构化要点，供后续对话作为上下文使用。
                                 必须包含：用户的当前目标、已做出的关键决定、已完成的文件改动或执行过的命令、未完成事项。
                                 只输出要点，使用简洁中文，不要客套。"""),
-                        Message.user(transcript.toString())),
+                        Message.user(unicodePrefix(transcript.toString(), inputLimit))),
                 0.3,
                 true,
                 new ChatRequest.StreamOptions(true),
                 null);
+        ChatStream stream = null;
         try {
-            ChatStream stream = client.chatStream(request);
+            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new IllegalStateException("摘要被取消");
+            hooks.onBeforeRequest(request);
+            stream = client.chatStream(request);
             StringBuilder summary = new StringBuilder();
             while (true) {
-                StreamChunk chunk = stream.poll(1000);
+                if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new IllegalStateException("摘要被取消");
+                StreamChunk chunk = stream.poll(200);
                 if (chunk instanceof StreamChunk.Delta d) {
                     summary.append(d.text());
+                    if (summary.length() >= 4000) break;
                 } else if (chunk instanceof StreamChunk.Done || chunk instanceof StreamChunk.Error e) {
                     if (chunk instanceof StreamChunk.Error err) {
                         throw new IllegalStateException(err.message());
@@ -805,12 +899,14 @@ public final class AgentRunner {
                     break;
                 }
             }
-            return summary.toString();
+            return unicodePrefix(summary.toString(), 4000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("摘要被中断", e);
         } catch (IOException e) {
             throw new IllegalStateException("摘要调用失败: " + e.getMessage(), e);
+        } finally {
+            if (stream != null) stream.cancel();
         }
     }
 

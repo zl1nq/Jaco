@@ -204,4 +204,60 @@ class ContextCompactorTest {
         }
         return sb.toString();
     }
+
+    @Test void singleTaskCompactsIterationGroupsWithoutArchivingSystemOrTask() throws Exception {
+        Session session = Session.create("child", 0);
+        session.messages().add(Message.system("SYSTEM_MUST_STAY"));
+        session.messages().add(Message.user("TASK_CONSTRAINTS_MUST_STAY"));
+        for (int i = 0; i < 5; i++) {
+            session.messages().add(new Message(Role.ASSISTANT, "已发现 src/F" + i + ".java", List.of(toolCall("a" + i), toolCall("b" + i)), null, null));
+            session.messages().add(Message.toolResult("a" + i, "first-" + i + "\n" + "x".repeat(2000)));
+            session.messages().add(Message.toolResult("b" + i, "second-" + i + "\n" + "y".repeat(2000)));
+        }
+        var outcome = compactor(session, 4000).compactIfNeeded(session.messages(), 0, n -> {}, null);
+        assertTrue(outcome.compacted());
+        assertEquals(Message.system("SYSTEM_MUST_STAY"), session.messages().get(0));
+        assertEquals(Message.user("TASK_CONSTRAINTS_MUST_STAY"), session.messages().get(1));
+        String archive = Files.readString(new SessionStore(tmp).archivePath(session));
+        assertFalse(archive.contains("SYSTEM_MUST_STAY"));
+        assertFalse(archive.contains("TASK_CONSTRAINTS_MUST_STAY"));
+        assertTrue(archive.contains("first-0"));
+        assertFalse(archive.contains("first-4"));
+        var ids = new java.util.HashSet<String>();
+        for (Message m : session.messages()) {
+            if (m.toolCalls() != null) {
+                assertTrue(ids.isEmpty());
+                m.toolCalls().forEach(call -> ids.add(call.id()));
+            }
+            if (m.role() == Role.TOOL) assertTrue(ids.remove(m.toolCallId()));
+        }
+        assertTrue(ids.isEmpty());
+        compactor(session, 4000).forceCompact(session.messages(), n -> {}, null);
+        assertEquals(1, session.messages().stream().filter(m -> m.role() == Role.USER).count());
+        assertEquals("TASK_CONSTRAINTS_MUST_STAY", session.messages().get(1).content());
+    }
+
+    @Test void failedIterationArchiveLeavesMessagesAndMetadataUntouched() throws Exception {
+        Session session = Session.create("child-failure", 0);
+        session.messages().add(Message.system("system"));
+        session.messages().add(Message.user("task"));
+        for (int i = 0; i < 4; i++) {
+            session.messages().add(new Message(Role.ASSISTANT, null, List.of(toolCall("c" + i)), null, null));
+            session.messages().add(Message.toolResult("c" + i, "x".repeat(2000)));
+        }
+        List<Message> before = List.copyOf(session.messages());
+        Files.createDirectory(new SessionStore(tmp).archivePath(session));
+        assertThrows(UncheckedIOException.class, () -> compactor(session, 1000).forceCompact(session.messages(), n -> {}, null));
+        assertEquals(before, session.messages());
+        assertTrue(session.compactedToolCallIds().isEmpty());
+    }
+
+    @Test void irreduciblePromptDoesNotClaimCompactionOrCreateArchive() throws Exception {
+        Session session = Session.create("no-progress", 0);
+        session.messages().add(Message.user("x".repeat(4000)));
+        var outcome = compactor(session, 1000).forceCompact(session.messages(), n -> {}, null);
+        assertFalse(outcome.compacted());
+        assertEquals(outcome.tokensBefore(), outcome.tokensAfter());
+        assertFalse(Files.exists(new SessionStore(tmp).archivePath(session)));
+    }
 }

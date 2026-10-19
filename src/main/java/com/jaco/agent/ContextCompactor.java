@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * 上下文压缩器。在轮开始时调用，循环本体不感知。单条超大工具输出由 AgentRunner 的
+ * 上下文压缩器。每次请求前调用。单条超大工具输出由 AgentRunner 的
  * 回填闸门在入口处截断落盘（不进入压缩周期），这里只管整轮级别的瘦身：
  *
  * <p>① 旧轮（最近 2 轮之外）的 tool_result 替换为一行摘要占位（工具名 + 体量 + 首行）——
@@ -22,6 +22,8 @@ import java.util.function.Consumer;
  * ② 中段整轮归档 JSONL（已归档的工具原文不重复写入），原位置留每轮一行的
  * 骨架摘要标记
  * ③ LLM 摘要兜底：② 仍不达标时总结归档内容替换标记，失败则骨架标记本身就是降级文案
+ * ④ 单轮内持续调用工具时，按 assistant 调用及全部结果分组归档；保留系统提示、原始任务
+ * 和最近两组迭代，强制压缩时保留最近一组。
  *
  * <p>度量：上次调用的真实 promptTokens 与字符估算取大者；触发 70%，目标 40%。
  * 另有 forceCompact：provider 报上下文超限时跳过触发阈值直接压，作为最后保险。
@@ -60,23 +62,35 @@ public final class ContextCompactor {
             return new Outcome(false, before, before);
         }
         notices.accept("⟲ 上下文接近上限（约 " + before + " tokens），正在压缩…");
-        long after = compact(messages, target, summarizer);
+        long actualBefore = estimateTokens(messages);
+        long after = compact(messages, target, summarizer, false);
         log.info("上下文压缩: {} -> {} tokens (limit={})", before, after, contextLimit);
-        notices.accept("⟲ 已压缩: " + before + " → " + after + " tokens（归档文件: " + sessions.archivePath(session).getFileName() + "）");
-        return new Outcome(true, before, after);
+        notices.accept(after < actualBefore ? "⟲ 已压缩: " + before + " → " + after + " tokens（归档文件: "
+                + sessions.archivePath(session).getFileName() + "）" : "⟲ 未找到可缩小的历史，保留任务及最近完整交互");
+        return new Outcome(after < actualBefore, before, after);
     }
 
     /** provider 报上下文超限后的强制压缩：跳过触发阈值，直接压到目标比例。 */
     public Outcome forceCompact(List<Message> messages, Consumer<String> notices, Summarizer summarizer) {
         long before = estimateTokens(messages);
         notices.accept("⟲ 上下文超限，正在强制压缩…");
-        long after = compact(messages, (long) (contextLimit * TARGET_RATIO), summarizer);
+        long after = compact(messages, (long) (contextLimit * TARGET_RATIO), summarizer, true);
         log.info("强制压缩: {} -> {} tokens (limit={})", before, after, contextLimit);
-        notices.accept("⟲ 已强制压缩: " + before + " → " + after + " tokens");
-        return new Outcome(true, before, after);
+        notices.accept(after < before ? "⟲ 已强制压缩: " + before + " → " + after + " tokens"
+                : "⟲ 强制压缩未能缩小请求，保留现有进展");
+        return new Outcome(after < before, before, after);
     }
 
-    private long compact(List<Message> messages, long target, Summarizer summarizer) {
+    private long compact(List<Message> messages, long target, Summarizer summarizer, boolean forced) {
+        long before = estimateTokens(messages);
+        long tokens = compactTurns(messages, target, summarizer);
+        return tokens > target || forced && tokens >= before
+                ? compactIterations(messages, target, summarizer, forced) : tokens;
+    }
+
+    private long compactTurns(List<Message> messages, long target, Summarizer summarizer) {
+        // 子任务消息包含系统提示，不能把它当作可归档的旧用户轮。
+        if (messages.stream().anyMatch(m -> m.role() == Role.SYSTEM)) return estimateTokens(messages);
         List<List<Message>> blocks = splitTurns(messages);
 
         if (blocks.size() <= KEEP_RECENT_TURNS) {
@@ -141,6 +155,69 @@ public final class ContextCompactor {
             }
         }
         return tokens;
+    }
+
+    /** 最新用户任务始终保留，assistant 调用及其全部结果作为一个迭代组移出。 */
+    private long compactIterations(List<Message> messages, long target, Summarizer summarizer, boolean forced) {
+        int task = -1;
+        for (int i = 0; i < messages.size(); i++) if (messages.get(i).role() == Role.USER) task = i;
+        if (task < 0) return estimateTokens(messages);
+        List<List<Message>> groups = new ArrayList<>();
+        for (int i = task + 1; i < messages.size(); i++) {
+            Message m = messages.get(i);
+            if (m.role() == Role.SYSTEM) return estimateTokens(messages); // 不跨越系统消息搬移。
+            if (m.role() == Role.ASSISTANT) groups.add(new ArrayList<>());
+            if (groups.isEmpty()) return estimateTokens(messages);
+            groups.getLast().add(m);
+        }
+        int keep = forced ? 1 : 2;
+        if (groups.size() <= keep) return estimateTokens(messages);
+        List<Message> old = flatten(groups.subList(0, groups.size() - keep));
+        List<Message> recent = flatten(groups.subList(groups.size() - keep, groups.size()));
+        StringBuilder digest = new StringBuilder("[迭代摘要：早前工具交互已归档，可用 recall 检索；以下为进展资料]\n");
+        for (Message m : old) {
+            if (m.content() != null && !m.content().isBlank()) {
+                // 上一次摘要的前部也包含原始进展，避免只留下重复的标记。
+                digest.append(m.role()).append(": ").append(shortText(m.content(), 240)).append('\n');
+            }
+            if (m.toolCalls() != null) for (ToolCall call : m.toolCalls()) {
+                digest.append("调用 ").append(call.function().name()).append(": ")
+                        .append(shortText(call.function().arguments(), 160)).append('\n');
+            }
+        }
+        int digestLimit = (int) Math.min(3000, Math.max(256, target));
+        String summary = shortText(digest.toString(), digestLimit);
+        List<Message> candidate = new ArrayList<>(messages.subList(0, task + 1));
+        candidate.add(Message.assistant(summary));
+        candidate.addAll(recent);
+        long before = estimateTokens(messages);
+        if (estimateTokens(candidate) > target && summarizer != null) {
+            try {
+                String generated = summarizer.summarize(old);
+                if (generated != null && !generated.isBlank()) {
+                    String replacement = "[迭代摘要：原文已归档，可用 recall 检索]\n" + shortText(generated, digestLimit);
+                    if (replacement.length() < summary.length()) candidate.set(task + 1, Message.assistant(replacement));
+                }
+            } catch (Exception e) {
+                log.warn("迭代摘要失败，保留进展线索: {}", e.getMessage());
+            }
+        }
+        if (estimateTokens(candidate) >= before || Thread.currentThread().isInterrupted()) return before;
+        // 成功落盘后才改消息和去重状态，系统提示、原始任务及最近完整迭代不归档。
+        sessions.appendArchive(session, old.stream().filter(m -> m.role() != Role.TOOL
+                || !session.compactedToolCallIds().contains(m.toolCallId())).toList());
+        for (Message m : old) if (m.role() == Role.TOOL) session.compactedToolCallIds().remove(m.toolCallId());
+        messages.clear();
+        messages.addAll(candidate);
+        return estimateTokens(messages);
+    }
+
+    private static String shortText(String text, int limit) {
+        if (text == null) return "";
+        if (text.length() <= limit) return text;
+        int end = limit;
+        if (end > 0 && Character.isHighSurrogate(text.charAt(end - 1)) && Character.isLowSurrogate(text.charAt(end))) end--;
+        return text.substring(0, end) + "…";
     }
 
     /** 收集块内 assistant.tool_calls 的 toolCallId → 工具名，供占位摘要引用。 */
