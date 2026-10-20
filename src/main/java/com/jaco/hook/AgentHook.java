@@ -3,6 +3,7 @@ package com.jaco.hook;
 import com.jaco.llm.ChatRequest;
 import com.jaco.llm.ChatResponse;
 import com.jaco.llm.ToolCall;
+import com.jaco.tool.ToolExecution;
 
 /**
  * Agent 生命周期钩子。所有方法都有默认空实现，按需覆盖；
@@ -38,6 +39,19 @@ public interface AgentHook {
 
     /** M1：工具执行后调用。 */
     default void onAfterToolCall(ToolCall call, String result) {
+    }
+
+    /** 准备完成、权限确认之前；只能观察预览，不应执行修改。 */
+    default void onToolPrepared(ToolCall call, String preview) {
+    }
+
+    /** 权限裁决完成、实际执行之前；可持久化允许/拒绝的原因。 */
+    default void onToolPermission(ToolCall call, HookVerdict verdict) {
+    }
+
+    /** 带明确执行状态的审计入口，兼容已有后置 hook。 */
+    default void onToolCompleted(ToolCall call, ToolExecution execution) {
+        onAfterToolCall(call, execution.result());
     }
 
     /** M1：一轮结束时调用。返回 true 表示强制续轮（返回内容追加后继续循环）。 */

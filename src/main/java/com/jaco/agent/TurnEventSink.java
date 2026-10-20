@@ -9,9 +9,17 @@ public final class TurnEventSink {
     private static final ThreadLocal<TurnEventSink> CURRENT = new ThreadLocal<>();
 
     private final TurnHandle handle;
+    private final String taskId;
+    private final java.util.function.BooleanSupplier stopped;
 
     private TurnEventSink(TurnHandle handle) {
+        this(handle, null, handle::isCancelled);
+    }
+
+    private TurnEventSink(TurnHandle handle, String taskId, java.util.function.BooleanSupplier stopped) {
         this.handle = handle;
+        this.taskId = taskId;
+        this.stopped = stopped;
     }
 
     static void install(TurnHandle handle) {
@@ -27,10 +35,37 @@ public final class TurnEventSink {
     }
 
     public void emit(TurnEvent event) {
+        if (taskId != null) {
+            if (cancelled()) return;
+            if (event instanceof TurnEvent.ToolCallStart e) event = new TurnEvent.ToolCallStart(e.tool(), e.summary(), taskId);
+            else if (event instanceof TurnEvent.ToolCallEnd e) event = new TurnEvent.ToolCallEnd(e.tool(), e.ok(), e.summary(), taskId);
+            else if (event instanceof TurnEvent.ToolPreview e) event = new TurnEvent.ToolPreview(e.text(), taskId);
+            else if (event instanceof TurnEvent.ApprovalRequest e) event = new TurnEvent.ApprovalRequest(e.tool(), e.detail(), e.resolver(), taskId);
+        }
         handle.emit(event);
     }
 
     public boolean cancelled() {
-        return handle.isCancelled();
+        return handle.isCancelled() || stopped.getAsBoolean();
+    }
+
+    /** 只桥接到创建它的父轮，不继承其他线程/新会话的事件槽。 */
+    public static Binding bindSubagent(TurnEventSink parent, String taskId,
+                                        java.util.function.BooleanSupplier cancelled) {
+        var binding = new Binding(CURRENT.get());
+        if (parent == null) CURRENT.remove();
+        else CURRENT.set(new TurnEventSink(parent.handle, taskId, cancelled));
+        return binding;
+    }
+
+    public String taskId() { return taskId; }
+
+    public static final class Binding implements AutoCloseable {
+        private final TurnEventSink previous;
+        private Binding(TurnEventSink previous) { this.previous = previous; }
+        @Override public void close() {
+            if (previous == null) CURRENT.remove();
+            else CURRENT.set(previous);
+        }
     }
 }

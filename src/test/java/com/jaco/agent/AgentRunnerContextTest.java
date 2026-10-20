@@ -188,7 +188,11 @@ class AgentRunnerContextTest {
             }
             return call("c" + calls.getAndIncrement(), "read_file", "{}");
         }, ctx -> "内容\n" + "x".repeat(2000), 1600, 2500);
-        assertTimeoutPreemptively(Duration.ofSeconds(3), () -> assertEquals("(子任务被中断)", agent.runSubagent("task", cancelled::get)));
+        assertTimeoutPreemptively(Duration.ofSeconds(3), () -> {
+            String report = agent.runSubagent("task", cancelled::get);
+            assertTrue(report.startsWith("(子任务被中断)"));
+            assertTrue(report.contains("部分进展"));
+        });
         assertTrue(cancelled.get());
         assertInstanceOf(StreamChunk.Error.class, summaryStream.get().poll(0));
     }

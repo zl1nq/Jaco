@@ -15,4 +15,8 @@ public final class TestStreams {
         }
         return stream;
     }
+
+    public static ChatStream withCleanup(Runnable cleanup) {
+        return new ChatStream(CompletableFuture.completedFuture(null), cleanup);
+    }
 }

@@ -58,6 +58,12 @@ public final class WriteFileTool implements Tool {
 
     @Override
     public PreparedToolCall prepare(JsonNode args, ToolContext ctx) throws IOException {
+        Runnable check = () -> {
+            if (Thread.currentThread().isInterrupted() || ctx.cancelled().getAsBoolean()) {
+                throw new ToolException("文件写入已取消");
+            }
+        };
+        check.run();
         if (args == null || !args.isObject()) {
             throw new ToolException("write_file 参数必须是 JSON 对象");
         }
@@ -95,6 +101,10 @@ public final class WriteFileTool implements Tool {
             throw new ToolException("文件在准备修改时已删除，请重新读取");
         }
         FileVersion.verify(args, snapshot);
-        return FileChange.prepare(file, snapshot, content, snapshot != null ? "已覆盖" : "已创建");
+        String before = FileChange.text(snapshot);
+        String preview = "基于文件版本: " + (snapshot == null ? "不存在（新建）" : FileVersion.of(snapshot))
+                + "\n" + FileDiff.render(file.toString(), snapshot == null, before, content);
+        check.run();
+        return FileChange.prepare(file, snapshot, before, content, snapshot != null ? "已覆盖" : "已创建", preview, check);
     }
 }

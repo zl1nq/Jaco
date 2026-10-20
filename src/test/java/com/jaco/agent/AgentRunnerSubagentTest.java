@@ -1,6 +1,8 @@
 package com.jaco.agent;
 
 import com.jaco.config.ProviderConfig;
+import com.jaco.agent.subagent.SubagentProfile;
+import com.jaco.agent.subagent.SubagentRequest;
 import com.jaco.hook.HookChain;
 import com.jaco.llm.ChatRequest;
 import com.jaco.llm.ChatStream;
@@ -34,6 +36,8 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class AgentRunnerSubagentTest {
 
@@ -97,10 +101,17 @@ class AgentRunnerSubagentTest {
                 new StreamChunk.Done("stop", null));
         FakeClient client = new FakeClient(List.of(s1, s2));
 
-        String report = runner(client).runSubagent("找找 x", () -> false);
+        AgentRunner agent = runner(client);
+        String report = agent.runSubagent("找找 x", () -> false);
 
         assertEquals("最终报告", report);
         assertEquals(2, client.requests.size());
+        assertEquals("explore", agent.subagentSnapshots().getFirst().profile());
+        assertTrue(agent.subagentCommand("").contains("[explore]"));
+        assertTrue(agent.subagentCommand(agent.subagentSnapshots().getFirst().id()).contains("[explore]"));
+        assertEquals(Role.SYSTEM, client.requests.getFirst().messages().getFirst().role());
+        assertTrue(client.requests.getFirst().messages().getFirst().content().contains("只读调查任务"));
+        assertThrows(UnsupportedOperationException.class, () -> SubagentProfile.EXPLORE.tools().add("write_file"));
 
         // 第一次请求只携带只读工具定义，且不含 task（禁止递归）
         Set<String> names = client.requests.get(0).tools().stream()
@@ -129,7 +140,51 @@ class AgentRunnerSubagentTest {
         assertEquals("old", java.nio.file.Files.readString(tmp.resolve("x")));
 
         String msgs = render(client.requests.get(1).messages());
-        assertTrue(msgs.contains("ERROR: 子 agent 只允许只读工具"));
+        assertTrue(msgs.contains("ERROR: 子 agent 本次只允许工具"));
+    }
+
+    @Test
+    void exploreRejectsShellNetworkBackgroundAndRecursiveCallsAtExecutionBoundary() throws Exception {
+        List<String> denied = List.of("run_command", "web_fetch", "process_start", "process_poll", "process_stop", "task");
+        List<StreamChunk> chunks = new ArrayList<>();
+        for (int i = 0; i < denied.size(); i++) {
+            chunks.add(new StreamChunk.ToolCallDelta(i, "denied" + i, denied.get(i), "{}"));
+        }
+        chunks.add(new StreamChunk.Done("tool_calls", null));
+        FakeClient client = new FakeClient(List.of(TestStreams.of(chunks.toArray(StreamChunk[]::new)),
+                TestStreams.of(new StreamChunk.Delta("已拒绝越权调用"), new StreamChunk.Done("stop", null))));
+        assertEquals("已拒绝越权调用", runner(client).runSubagent("调查", () -> false));
+        List<Message> results = client.requests.get(1).messages().stream().filter(m -> m.role() == Role.TOOL).toList();
+        assertEquals(denied.size(), results.size());
+        for (int i = 0; i < results.size(); i++) {
+            assertEquals("denied" + i, results.get(i).toolCallId());
+            assertTrue(results.get(i).content().startsWith("ERROR: 子 agent 本次只允许工具"));
+        }
+    }
+
+    @Test
+    void toolSubsetRestrictsDefinitionsAndDeniesExcludedButRegisteredTools() throws Exception {
+        java.nio.file.Files.writeString(tmp.resolve("x"), "ORIGINAL_CONTENT");
+        FakeClient client = new FakeClient(List.of(TestStreams.of(
+                new StreamChunk.ToolCallDelta(0, "allowed", "read_file", "{\"path\":\"x\"}"),
+                new StreamChunk.ToolCallDelta(1, "excluded", "grep", "{\"pattern\":\"ORIGINAL_CONTENT\"}"),
+                new StreamChunk.Done("tool_calls", null)), TestStreams.of(
+                new StreamChunk.Delta("报告"), new StreamChunk.Done("stop", null))));
+        try (var agent = runner(client)) {
+            var selected = new java.util.HashSet<>(Set.of("read_file"));
+            var request = new SubagentRequest("调查", SubagentProfile.EXPLORE, selected);
+            selected.add("grep"); // 调用者后续修改不能扩大已创建请求的工具范围。
+            assertEquals("报告", agent.runSubagent(request, () -> false));
+            assertEquals(List.of("read_file"), client.requests.getFirst().tools().stream()
+                    .map(t -> t.function().name()).toList());
+            var results = client.requests.get(1).messages().stream().filter(m -> m.role() == Role.TOOL).toList();
+            assertTrue(results.get(0).content().contains("ORIGINAL_CONTENT"));
+            assertTrue(results.get(1).content().startsWith("ERROR: 子 agent 本次只允许工具"));
+            assertFalse(results.get(1).content().contains("ORIGINAL_CONTENT"));
+            var snapshot = agent.subagentSnapshots().getFirst();
+            assertEquals(Set.of("read_file"), snapshot.tools());
+            assertTrue(agent.subagentCommand(snapshot.id()).contains("tools=[read_file]"));
+        }
     }
 
     @Test

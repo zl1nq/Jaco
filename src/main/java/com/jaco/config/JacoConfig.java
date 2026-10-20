@@ -17,6 +17,8 @@ public record JacoConfig(
         @JsonProperty("max_iterations") Integer maxIterations,
         @JsonProperty("context_limit") Long contextLimit,
         @JsonProperty("max_tool_result_chars") Integer maxToolResultChars,
+        @JsonProperty("subagent_timeout_seconds") Integer subagentTimeoutSeconds,
+        @JsonProperty("subagent_max_iterations") Integer subagentMaxIterations,
         WorkspaceConfig workspace,
         Map<String, ProviderConfig> providers) {
 
@@ -33,6 +35,15 @@ public record JacoConfig(
 
     public int effectiveMaxIterations() {
         return maxIterations == null || maxIterations < 1 ? 25 : maxIterations;
+    }
+
+    public int effectiveSubagentTimeoutSeconds() {
+        return subagentTimeoutSeconds == null || subagentTimeoutSeconds < 1 ? 300 : subagentTimeoutSeconds;
+    }
+
+    public int effectiveSubagentMaxIterations() {
+        return subagentMaxIterations == null || subagentMaxIterations < 1 ? effectiveMaxIterations()
+                : Math.min(subagentMaxIterations, effectiveMaxIterations());
     }
 
     /** 模型上下文窗口大小（tokens），决定压缩触发点（70%）与目标（40%）。 */

@@ -13,6 +13,18 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class TurnHandle implements AutoCloseable {
 
+    private final String id = java.util.UUID.randomUUID().toString();
+    private final java.util.concurrent.CopyOnWriteArrayList<Runnable> cancelListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public String id() { return id; }
+
+    /** 注册和取消并发时可能重复通知，回调必须幂等。 */
+    public void onCancel(Runnable listener) {
+        cancelListeners.add(listener);
+        if (cancelled) listener.run();
+    }
+
     private static final TurnEvent CANCELLED_SENTINEL =
             new TurnEvent.Done(null, null, true, false, null, 0);
 
@@ -57,6 +69,7 @@ public final class TurnHandle implements AutoCloseable {
     /** 中断本轮：立即生效于流消费、命令执行与权限等待。 */
     public void cancel() {
         cancelled = true;
+        for (Runnable listener : cancelListeners) listener.run();
         var stream = currentStream.get();
         if (stream != null) {
             stream.cancel();

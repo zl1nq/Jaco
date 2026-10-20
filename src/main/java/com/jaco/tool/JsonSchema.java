@@ -43,6 +43,13 @@ public final class JsonSchema {
         return this;
     }
 
+    public JsonSchema strings(String name, String description, String... enumValues) {
+        strings(name, description);
+        ArrayNode enums = ((ObjectNode) properties.get(name).get("items")).putArray("enum");
+        for (String value : enumValues) enums.add(value);
+        return this;
+    }
+
     public JsonSchema string(String name, String description, String... enumValues) {
         ObjectNode prop = properties.putObject(name);
         prop.put("type", "string").put("description", description);

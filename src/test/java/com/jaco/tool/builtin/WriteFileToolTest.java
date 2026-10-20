@@ -75,6 +75,25 @@ class WriteFileToolTest {
     }
 
     @Test
+    void cancellationAfterPreparationPreventsCreationAndOverwrite() throws Exception {
+        for (boolean existed : List.of(false, true)) {
+            Path file = tmp.resolve("target.txt");
+            if (existed) Files.writeString(file, "old");
+            var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+            var ctx = new ToolContext(tmp, new ToolSandbox(tmp, List.of()), "auto",
+                    new AtomicReference<>(), cancelled::get, null);
+            var args = MAPPER.createObjectNode().put("path", "target.txt").put("content", "new");
+            if (existed) args.put("expected_version", FileVersion.of(Files.readAllBytes(file)));
+            var prepared = tool.prepare(args, ctx);
+            cancelled.set(true);
+            assertThrows(ToolException.class, prepared::execute);
+            if (existed) assertEquals("old", Files.readString(file));
+            else assertFalse(Files.exists(file));
+            assertNoTemporaryFiles(tmp);
+        }
+    }
+
+    @Test
     void createsNestedUtf8FileAndReplacesExistingContent() throws Exception {
         String text = "中文😀\r\n第二行\n";
         assertTrue(write("a/b/code.txt", text).startsWith("已创建"));

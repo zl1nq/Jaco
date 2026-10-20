@@ -39,11 +39,17 @@ public final class ConsoleApp {
     private final Terminal terminal;
     private final LineReader reader;
     private final Map<String, Command> commands = new LinkedHashMap<>();
+    private String nextInput = "";
 
     public ConsoleApp(AgentRunner agent) throws IOException {
+        this(agent, TerminalBuilder.builder().system(true).build(), null);
+    }
+
+    /** 注入终端和行编辑器，以真实事件流验证运行期间的命令输入。 */
+    ConsoleApp(AgentRunner agent, Terminal terminal, LineReader lineReader) {
         this.agent = agent;
-        this.terminal = TerminalBuilder.builder().system(true).build();
-        this.reader = LineReaderBuilder.builder()
+        this.terminal = terminal;
+        this.reader = lineReader != null ? lineReader : LineReaderBuilder.builder()
                 .terminal(terminal)
                 .variable(LineReader.HISTORY_FILE, Path.of(
                         System.getProperty("jaco.home"), "history"))
@@ -64,6 +70,10 @@ public final class ConsoleApp {
         }));
         commands.put("sessions", new Command.Simple("sessions", "列出会话（新→旧，* 为当前）", args -> {
             printSessions();
+            return true;
+        }));
+        commands.put("subagents", new Command.Simple("subagents", "子任务状态和结果：/subagents [完整任务ID]", args -> {
+            println(agent.subagentCommand(args));
             return true;
         }));
         commands.put("switch", new Command.Simple("switch", "切换会话：/switch <会话id>（支持唯一前缀）", args -> {
@@ -91,6 +101,10 @@ public final class ConsoleApp {
             return true;
         }));
         commands.put("exit", new Command.Simple("exit", "退出（Ctrl+D 同效）", args -> false));
+        commands.put("cancel", new Command.Simple("cancel", "运行期间中断本轮", args -> {
+            println(ANSI_DIM + "当前没有运行中的轮次。" + ANSI_RESET);
+            return true;
+        }));
     }
 
     private boolean confirmMemoryClear() {
@@ -134,8 +148,10 @@ public final class ConsoleApp {
             String line;
             try {
                 printInputFrameTop();
+                String initial = nextInput;
+                nextInput = "";
                 line = reader.readLine(ANSI_DIM + "│ " + ANSI_RESET
-                        + ANSI_GREEN + BOLD + "❯ " + ANSI_RESET);
+                        + ANSI_GREEN + BOLD + "❯ " + ANSI_RESET, null, initial);
                 // 管道输入的 dumb 终端不会回显输入或换行，补齐后再画底线。
                 if (terminal.getType() != null && terminal.getType().startsWith("dumb")) {
                     println(line);
@@ -215,6 +231,7 @@ public final class ConsoleApp {
             println("  /" + c.name() + ANSI_DIM + "  " + c.description() + ANSI_RESET);
         }
         println(ANSI_DIM + "  Ctrl+C  中断本轮（取消流/杀命令/拒绝确认，已生成部分保留）" + ANSI_RESET);
+        println(ANSI_DIM + "  运行期间可输入 /subagents [任务ID]、/help、/cancel，回车执行；Ctrl+U 清空输入" + ANSI_RESET);
     }
 
     // ---- 一轮对话：消费 agent loop 的事件流 ----
@@ -227,7 +244,7 @@ public final class ConsoleApp {
         return !agent.hasPendingUserProfile() || consumeTurn(agent.flushUserProfile());
     }
 
-    private boolean consumeTurn(TurnHandle handle) {
+    boolean consumeTurn(TurnHandle handle) {
         long start = System.currentTimeMillis();
         Spinner spinner = new Spinner(terminal);
         MarkdownRenderer renderer = new MarkdownRenderer();
@@ -243,19 +260,53 @@ public final class ConsoleApp {
         int iterations = 0;
         boolean sawOutput = false;
         boolean replyLabeled = false;
+        RunningCommandInput input = new RunningCommandInput();
+        boolean inputVisible = false;
+        TurnEvent.ApprovalRequest deferredApproval = null;
 
         try {
             while (true) {
-                TurnEvent event = handle.poll(60);
-                if (event == null) {
-                    int key = terminal.reader().read(1L);
-                    if (key == 3) { // Ctrl+C
-                        handle.cancel();
+                // 每次迭代都读按键，持续有输出时也能及时响应查询与取消。
+                int key = terminal.reader().read(1L);
+                var action = input.accept(key);
+                if (action != RunningCommandInput.Action.NONE) {
+                    if (inputVisible) {
+                        clearRunningInput();
+                        inputVisible = false;
                     }
-                    if (!sawOutput) {
+                    if (!sawOutput) spinner.stop();
+                    if (action == RunningCommandInput.Action.CANCEL) {
+                        handle.cancel();
+                    } else if (action == RunningCommandInput.Action.SUBMIT) {
+                        flushPending(renderer, pending);
+                        ensureLineStart();
+                        println(ANSI_GREEN + "运行命令 ❯ " + input.text() + ANSI_RESET);
+                        dispatchRunningCommand(input.text(), handle);
+                        input.clear();
+                    } else if (pending.isEmpty()) {
+                        ensureLineStart();
+                    }
+                }
+                if (handle.isCancelled()) deferredApproval = null;
+                TurnEvent event;
+                if (deferredApproval != null && input.isEmpty()) {
+                    event = deferredApproval;
+                    deferredApproval = null;
+                } else {
+                    event = handle.poll(60);
+                }
+                if (event == null) {
+                    if (!input.isEmpty() && !inputVisible && atLineStart && pending.isEmpty()) {
+                        drawRunningInput(input.text());
+                        inputVisible = true;
+                    } else if (!sawOutput && input.isEmpty()) {
                         spinner.tick();
                     }
                     continue;
+                }
+                if (inputVisible) {
+                    clearRunningInput();
+                    inputVisible = false;
                 }
                 if (event instanceof TurnEvent.Delta d) {
                     if (!sawOutput) {
@@ -282,9 +333,10 @@ public final class ConsoleApp {
                         sawOutput = true;
                     }
                     flushPending(renderer, pending);
-                    println(ANSI_YELLOW + "⏺ " + s.tool() + ANSI_RESET + ANSI_DIM + "(" + s.summary() + ")" + ANSI_RESET);
+                    println(ANSI_YELLOW + "⏺ " + origin(s.taskId()) + s.tool() + ANSI_RESET + ANSI_DIM + "(" + s.summary() + ")" + ANSI_RESET);
                 } else if (event instanceof TurnEvent.ToolPreview preview) {
                     flushPending(renderer, pending);
+                    if (preview.taskId() != null) println(ANSI_DIM + origin(preview.taskId()) + "修改预览" + ANSI_RESET);
                     for (String line : preview.text().split("\n")) {
                         String color = line.startsWith("+") ? ANSI_GREEN
                                 : line.startsWith("-") ? ANSI_RED : ANSI_DIM;
@@ -294,7 +346,7 @@ public final class ConsoleApp {
                     // 结果预览挂一条竖轨，视觉上归属上方的 ⏺
                     String[] lines = e.summary().split("\\n");
                     String rail = e.ok() ? ANSI_DIM + "  ╰─ " : ANSI_RED + "  ✗ ";
-                    println(rail + (e.ok() ? ANSI_DIM : "") + lines[0] + ANSI_RESET);
+                    println(rail + (e.ok() ? ANSI_DIM : "") + origin(e.taskId()) + lines[0] + ANSI_RESET);
                     for (int i = 1; i < lines.length; i++) {
                         println(ANSI_DIM + "  │ " + lines[i] + ANSI_RESET);
                     }
@@ -303,13 +355,20 @@ public final class ConsoleApp {
                     // 暗色状态行；spinner 在下一行继续（sawOutput 仍为 false 时）
                     spinner.stop();
                     rawPrint(ANSI_DIM + n.text() + ANSI_RESET + "\n");
+                    if (n.text().startsWith("⟣ 子任务开始")) {
+                        rawPrint(ANSI_DIM + "输入 /subagents 查询状态 · /cancel 或 Ctrl+C 中断" + ANSI_RESET + "\n");
+                    }
                 } else if (event instanceof TurnEvent.ApprovalRequest a) {
-                    // 退出 raw mode 才能用 LineReader 正常读入
-                    terminal.writer().flush();
-                    terminal.setAttributes(savedAttributes);
-                    String answer = askApproval(a);
-                    a.resolver().accept(answer);
-                    terminal.enterRawMode();
+                    // 用户正在输入时延后确认，不能让剩余按键被当作授权答案。
+                    if (!input.isEmpty()) {
+                        deferredApproval = a;
+                    } else {
+                        terminal.writer().flush();
+                        terminal.setAttributes(savedAttributes);
+                        String answer = askApproval(a);
+                        a.resolver().accept(answer);
+                        terminal.enterRawMode();
+                    }
                 } else if (event instanceof TurnEvent.Done d) {
                     usage = d.usage();
                     finishReason = d.finishReason();
@@ -319,18 +378,29 @@ public final class ConsoleApp {
                     iterations = d.iterations();
                     break;
                 }
+                if (!input.isEmpty() && atLineStart && pending.isEmpty()) {
+                    drawRunningInput(input.text());
+                    inputVisible = true;
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             handle.cancel();
             interrupted = true;
         } catch (IOException e) {
+            handle.cancel();
             error = e;
         } finally {
+            if (inputVisible) clearRunningInput();
             if (!sawOutput) {
                 spinner.stop();
             }
             flushPending(renderer, pending);
+            if (!input.isEmpty()) {
+                ensureLineStart();
+                nextInput = input.text();
+                println(ANSI_DIM + "（本轮已结束，未提交的输入保留到输入框）" + ANSI_RESET);
+            }
             terminal.writer().flush();
             terminal.setAttributes(savedAttributes);
         }
@@ -349,8 +419,39 @@ public final class ConsoleApp {
         return !interrupted && error == null;
     }
 
+    private void clearRunningInput() {
+        terminal.writer().print("\r\033[2K");
+        terminal.writer().flush();
+        atLineStart = true;
+    }
+
+    private void drawRunningInput(String text) {
+        // 只显示一行尾部，避免窄终端换行后清除到模型输出。
+        int width = terminal.getWidth() > 0 ? terminal.getWidth() : 80;
+        String prefix = width >= 16 ? "运行命令 ❯ " : width >= 4 ? "> " : "";
+        int available = Math.max(1, width - com.jaco.render.DisplayWidth.width(prefix) - 1);
+        String visible = text;
+        while (com.jaco.render.DisplayWidth.width(visible) > available) {
+            visible = visible.substring(visible.offsetByCodePoints(0, 1));
+        }
+        rawPrint(ANSI_GREEN + prefix + visible + ANSI_RESET);
+    }
+
+    void dispatchRunningCommand(String input, TurnHandle handle) {
+        String line = input.strip();
+        String command = line.split("\\s+", 2)[0];
+        if (command.equals("/subagents") || command.equals("/help")) {
+            dispatch(line);
+        } else if (line.equals("/cancel")) {
+            handle.cancel();
+        } else {
+            println(ANSI_YELLOW + "运行期间支持 /subagents [任务ID]、/help、/cancel；其他命令请在本轮结束后执行。" + ANSI_RESET);
+        }
+    }
+
     private String askApproval(TurnEvent.ApprovalRequest request) {
         println(ANSI_YELLOW + "╭─ 需要确认 ─────────────────" + ANSI_RESET);
+        if (request.taskId() != null) println(ANSI_YELLOW + "│ " + ANSI_RESET + origin(request.taskId()));
         println(ANSI_YELLOW + "│ " + ANSI_RESET + request.detail());
         String approval = request.tool().equals("web_fetch") ? " y=本次 · a=本会话同源站点放行 · n=拒绝"
                 : " y=本次 · a=本会话放行 · n=拒绝";
@@ -369,6 +470,10 @@ public final class ConsoleApp {
                 return line;
             }
         }
+    }
+
+    private static String origin(String taskId) {
+        return taskId == null ? "" : "[子任务 " + taskId + "] ";
     }
 
     /** 把不完整的尾行按完整行渲染输出，并冲出渲染器的表格/挂起缓冲（Done/中断/工具开始前调用）。 */

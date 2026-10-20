@@ -112,9 +112,12 @@ public final class Main {
             System.err.println("用户画像加载失败，本次不启用自动记忆；请检查 user-profile.json，原文件保留。");
         }
         agent.start();
+        agent.configureSubagentLimits(java.time.Duration.ofSeconds(config.effectiveSubagentTimeoutSeconds()),
+                config.effectiveSubagentMaxIterations());
         taskTool.bind(agent::runSubagent);
 
         Thread shutdown = new Thread(() -> {
+            agent.close();
             webFetch.close();
             background.close();
         }, "jaco-tools-shutdown");
@@ -122,6 +125,7 @@ public final class Main {
         try {
             new ConsoleApp(agent).run();
         } finally {
+            agent.close();
             webFetch.close();
             background.close();
             try {
@@ -149,6 +153,8 @@ public final class Main {
                 # log_level: DEBUG（可选，默认 INFO）
                 # shell: auto            # auto / bash / cmd / powershell
                 # max_iterations: 25     # 单轮最大 LLM 调用次数
+                # subagent_timeout_seconds: 300  # 子任务整体超时（含上下文压缩）
+                # subagent_max_iterations: 25    # 子任务迭代上限，不超过 max_iterations
                 # workspace:
                 #   extra_roots: [D:/other-project]   # 文件工具的额外允许目录
                 providers:
