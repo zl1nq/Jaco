@@ -50,6 +50,7 @@ class ConsoleAppRunningCommandTest {
         final ArrayDeque<Integer> keys = new ArrayDeque<>();
         IntConsumer onRead = count -> { };
         Function<Object[], String> readLine = args -> { throw new EndOfFileException(); };
+        java.util.function.Consumer<String> printAbove = text -> { };
         int reads;
         final NonBlockingReader input = new NonBlockingReader() {
             @Override protected int read(long timeout, boolean peek) {
@@ -79,6 +80,7 @@ class ConsoleAppRunningCommandTest {
         final LineReader lineReader = (LineReader) Proxy.newProxyInstance(LineReader.class.getClassLoader(),
                 new Class<?>[]{LineReader.class}, (proxy, method, args) -> {
                     if (method.getName().equals("readLine")) return readLine.apply(args);
+                    if (method.getName().equals("printAbove")) printAbove.accept((String) args[0]);
                     return null;
                 });
 
@@ -95,6 +97,67 @@ class ConsoleAppRunningCommandTest {
             console.app(agent).run();
             assertTrue(console.text().contains("当前会话暂无子任务"));
             assertFalse(console.text().contains("未知命令"));
+        }
+    }
+
+    @Test void backgroundCompletionWhileReadingUsesPrintAboveWithoutRestartingInput() throws Exception {
+        var stream = TestStreams.of();
+        var client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request) { return stream; }
+        };
+        try (var agent = agent(client, new ToolRegistry())) {
+            agent.runSubagent(new com.jaco.agent.subagent.SubagentRequest("调查",
+                    com.jaco.agent.subagent.SubagentProfile.EXPLORE, null, true), () -> false);
+            var console = new Console();
+            var notice = new AtomicReference<String>();
+            var notified = new CountDownLatch(1);
+            var reads = new AtomicInteger();
+            console.printAbove = text -> { notice.set(text); notified.countDown(); };
+            console.readLine = args -> {
+                reads.incrementAndGet();
+                TestStreams.emit(stream, new StreamChunk.Delta("后台报告"));
+                TestStreams.emit(stream, new StreamChunk.Done("stop", null));
+                try { assertTrue(notified.await(3, TimeUnit.SECONDS)); }
+                catch (InterruptedException e) { throw new AssertionError(e); }
+                return "/exit";
+            };
+            assertTimeoutPreemptively(Duration.ofSeconds(5), () -> console.app(agent).run());
+            assertEquals(1, reads.get());
+            assertTrue(notice.get().contains("后台子任务结束"));
+            assertTrue(notice.get().contains("SUCCEEDED"));
+            assertNull(agent.pollSubagentNotice());
+        }
+    }
+
+    @Test void backgroundCompletionDuringTurnIsRenderedAndKeepsUnsubmittedCommand() throws Exception {
+        var stream = TestStreams.of();
+        var client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request) { return stream; }
+        };
+        try (var agent = agent(client, new ToolRegistry()); var turn = new TurnHandle()) {
+            agent.runSubagent(new com.jaco.agent.subagent.SubagentRequest("调查",
+                    com.jaco.agent.subagent.SubagentProfile.EXPLORE, null, true), () -> false);
+            Console console = new Console();
+            console.type("/");
+            console.onRead = n -> {
+                TestStreams.emit(stream, new StreamChunk.Done("stop", null));
+            };
+            var app = console.app(agent);
+            Thread finisher = Thread.ofVirtual().start(() -> {
+                try {
+                    while (!console.text().contains("后台子任务结束")) Thread.sleep(10);
+                    TestTurnEvents.emit(turn, new TurnEvent.Done(null, "stop", false, false, null, 1));
+                } catch (InterruptedException ignored) { }
+            });
+            try {
+                assertTimeoutPreemptively(Duration.ofSeconds(5), () -> app.consumeTurn(turn));
+                assertTrue(console.text().contains("SUCCEEDED"));
+                console.readLine = args -> {
+                    assertEquals("/", args[2]);
+                    return "/exit";
+                };
+                app.run();
+            } finally { finisher.interrupt(); }
         }
     }
 

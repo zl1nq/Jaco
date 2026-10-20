@@ -18,6 +18,23 @@ class SessionStoreTest {
     Path tmp;
 
     @Test
+    void rapidNewSessionsHaveDistinctIdsAndPreservePreviousContent() throws Exception {
+        var store = new SessionStore(tmp);
+        var first = store.createNew();
+        first.messages().add(com.jaco.llm.Message.user("保留旧会话"));
+        store.save(first);
+        var ids = new java.util.HashSet<String>();
+        ids.add(first.id());
+        Session latest = first;
+        for (int i = 0; i < 20; i++) {
+            latest = store.createNew();
+            assertTrue(ids.add(latest.id()));
+        }
+        assertEquals("保留旧会话", store.load(first.id()).orElseThrow().messages().getFirst().content());
+        assertEquals(latest.id(), store.loadLatestOrNew().id());
+    }
+
+    @Test
     void listSessionsSortedNewestFirst() throws Exception {
         SessionStore store = new SessionStore(tmp);
         Session old = Session.create("s20260101-000000", 1000);

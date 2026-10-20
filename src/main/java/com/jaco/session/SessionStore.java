@@ -25,7 +25,7 @@ import java.util.stream.Stream;
 public final class SessionStore {
 
     private static final Logger log = LoggerFactory.getLogger(SessionStore.class);
-    private static final DateTimeFormatter ID_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+    private static final DateTimeFormatter ID_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmssSSS");
 
     private final Path dir;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -35,8 +35,12 @@ public final class SessionStore {
         Files.createDirectories(dir);
     }
 
-    public Session createNew() {
+    public synchronized Session createNew() {
         LocalDateTime now = LocalDateTime.now();
+        // 快速 /new 也必须有不同身份，避免覆盖旧会话及串接后台任务通知。
+        while (Files.exists(dir.resolve("s" + now.format(ID_FORMAT) + ".json"))) {
+            now = now.plusNanos(1_000_000);
+        }
         Session session = Session.create("s" + now.format(ID_FORMAT), System.currentTimeMillis());
         save(session);
         return session;

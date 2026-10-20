@@ -17,6 +17,7 @@ public final class SubagentControl {
     private final String parentTurnId;
     private final SubagentProfile profile;
     private final Set<String> tools;
+    private final boolean runInBackground;
     private final long timeoutNanos;
     private final long deadline;
     private java.util.function.BooleanSupplier parentCancelled;
@@ -51,6 +52,7 @@ public final class SubagentControl {
         this.parentTurnId = spec.parentTurnId();
         this.profile = spec.profile();
         this.tools = spec.tools();
+        this.runInBackground = spec.runInBackground();
         this.timeoutNanos = spec.timeout().toNanos();
         this.deadline = createdAt + spec.timeout().toMillis();
         this.parentCancelled = parentCancelled;
@@ -219,7 +221,7 @@ public final class SubagentControl {
     public synchronized SubagentHandle.Snapshot snapshot() {
         return new SubagentHandle.Snapshot(id, parentSessionId, parentTurnId, profile.id(), tools, state, phase,
                 stopReason, createdAt, startedAt, exitedAt, deadline,
-                iterations, totalTokens, usageAvailable, cleanupOverdue, auditFile);
+                iterations, totalTokens, usageAvailable, cleanupOverdue, auditFile, runInBackground);
     }
 
     static String limit(String text, int length) {

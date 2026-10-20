@@ -14,12 +14,12 @@ import java.util.function.BooleanSupplier;
 
 /**
  * 按预设委派子 agent：独立线程跑一个嵌套 agent loop（独立上下文），
- * 最终报告作为工具结果返回父模型。中间探索过程不占用父上下文，也不进父会话归档。
+ * 同步时返回报告，后台时立即返回任务回执。中间探索过程不占用父上下文，也不进父会话归档。
  * Handler 由 Main 在 AgentRunner 构造后绑定（registry 先于 runner 存在，晚接线）。
  */
 public final class TaskTool implements Tool {
 
-    /** 由 AgentRunner 实现：同步执行子任务并返回报告（含"被中断"等终态文案）。 */
+    /** 由 AgentRunner 实现：按请求同步等待报告，或返回后台任务回执。 */
     public interface Handler {
         String run(SubagentRequest request, BooleanSupplier cancelled);
     }
@@ -40,6 +40,8 @@ public final class TaskTool implements Tool {
         return "委派一个具有独立上下文的子 agent，返回最终报告。"
                 + "profile 默认 explore（只读调查）；edit 可读写文件，修改会展示预览并遵循宿主权限确认和审计。"
                 + "两种预设都禁止 shell、网络和递归委派；tools 可进一步收窄工具范围，不能扩权。"
+                + "run_in_background 默认 false；仅 explore 可设 true，立即返回任务ID，完成后通知。"
+                + "后台任务用 task_status 查询报告、task_cancel 取消；通知不会自动唤醒模型。"
                 + "适合大范围搜索、代码调研等中间输出很多的场景；子任务的过程不占用本对话上下文。";
     }
 
@@ -52,6 +54,7 @@ public final class TaskTool implements Tool {
                 .strings("tools", "可选工具子集，必须全部属于所选预设；省略使用完整预设，[] 禁止工具，重复项去重",
                         Arrays.stream(SubagentProfile.values()).flatMap(p -> p.tools().stream())
                                 .distinct().sorted().toArray(String[]::new))
+                .bool("run_in_background", "默认 false；true 后台异步运行并在完成后通知，仅支持 explore")
                 .required("prompt")
                 .build();
     }
@@ -61,7 +64,8 @@ public final class TaskTool implements Tool {
         String p = args.path("prompt").asText("?");
         String profile = args.path("profile").asText("explore");
         String tools = args.has("tools") ? args.path("tools").toString() : "预设默认";
-        return "profile=" + brief(profile, 32) + ", tools=" + brief(tools, 100) + ": " + brief(p, 60);
+        return "profile=" + brief(profile, 32) + ", background=" + args.path("run_in_background").asBoolean(false)
+                + ", tools=" + brief(tools, 100) + ": " + brief(p, 60);
     }
 
     @Override
@@ -100,7 +104,10 @@ public final class TaskTool implements Tool {
                 tools.add(tool.textValue());
             }
         }
-        return new SubagentRequest(prompt, profile, tools);
+        if (args.has("run_in_background") && !args.path("run_in_background").isBoolean()) {
+            throw new IllegalArgumentException("run_in_background 必须是 boolean");
+        }
+        return new SubagentRequest(prompt, profile, tools, args.path("run_in_background").asBoolean(false));
     }
 
     private String brief(String text, int limit) {
