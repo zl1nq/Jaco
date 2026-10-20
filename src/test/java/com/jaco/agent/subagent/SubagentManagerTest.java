@@ -46,6 +46,7 @@ class SubagentManagerTest {
             assertEquals(SubagentState.EXITED, handle.snapshot().state());
             assertEquals("session", handle.snapshot().parentSessionId());
             assertEquals("turn", handle.snapshot().parentTurnId());
+            assertEquals("explore", handle.snapshot().profile());
             assertNotNull(handle.snapshot().startedAt());
             assertNotNull(handle.snapshot().exitedAt());
             assertEquals(14, result.stats().totalTokens());

@@ -14,6 +14,7 @@ public final class SubagentControl {
     private SubagentSpec spec;
     private final String parentSessionId;
     private final String parentTurnId;
+    private final SubagentProfile profile;
     private final long timeoutNanos;
     private final long deadline;
     private java.util.function.BooleanSupplier parentCancelled;
@@ -43,6 +44,7 @@ public final class SubagentControl {
         this.spec = spec;
         this.parentSessionId = spec.parentSessionId();
         this.parentTurnId = spec.parentTurnId();
+        this.profile = spec.profile();
         this.timeoutNanos = spec.timeout().toNanos();
         this.deadline = createdAt + spec.timeout().toMillis();
         this.parentCancelled = parentCancelled;
@@ -209,7 +211,7 @@ public final class SubagentControl {
     }
 
     public synchronized SubagentHandle.Snapshot snapshot() {
-        return new SubagentHandle.Snapshot(id, parentSessionId, parentTurnId, state, phase,
+        return new SubagentHandle.Snapshot(id, parentSessionId, parentTurnId, profile.id(), state, phase,
                 stopReason, createdAt, startedAt, exitedAt, deadline,
                 iterations, totalTokens, usageAvailable, cleanupOverdue);
     }

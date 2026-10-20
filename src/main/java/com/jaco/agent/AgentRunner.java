@@ -4,6 +4,7 @@ import com.jaco.config.ProviderConfig;
 import com.jaco.agent.subagent.StopReason;
 import com.jaco.agent.subagent.SubagentHandle;
 import com.jaco.agent.subagent.SubagentManager;
+import com.jaco.agent.subagent.SubagentProfile;
 import com.jaco.agent.subagent.SubagentResult;
 import com.jaco.agent.subagent.SubagentRunner;
 import com.jaco.agent.subagent.SubagentSpec;
@@ -553,16 +554,18 @@ public final class AgentRunner implements AutoCloseable {
         if (!id.isEmpty()) {
             var child = subagents.find(id);
             if (child == null || !child.snapshot().parentSessionId().equals(owner)) return "没有匹配的子任务";
+            String identity = child.id() + " [" + child.snapshot().profile() + "]";
             var result = child.result();
-            return result == null ? child.id() + " " + child.snapshot().state()
-                    : child.id() + " " + result.exitReason() + " / " + result.stats().elapsedMillis() + "ms / "
+            return result == null ? identity + " " + child.snapshot().state()
+                    : identity + " " + result.exitReason() + " / " + result.stats().elapsedMillis() + "ms / "
                     + (result.stats().usageAvailable() ? result.stats().totalTokens() + " tokens" : "token 用量未知")
                     + "\n" + result.toToolResult();
         }
         StringBuilder text = new StringBuilder();
         for (var snapshot : subagents.snapshots()) {
             if (!snapshot.parentSessionId().equals(owner)) continue;
-            text.append(snapshot.id()).append(" ").append(snapshot.state()).append(" / ")
+            text.append(snapshot.id()).append(" [").append(snapshot.profile()).append("] ")
+                    .append(snapshot.state()).append(" / ")
                     .append(snapshot.phase()).append(" / ").append(snapshot.iterations()).append(" 次迭代");
             text.append(" / ").append(snapshot.usageAvailable() ? snapshot.totalTokens() + " tokens" : "token 用量未知");
             var handle = subagents.find(snapshot.id());
@@ -579,7 +582,8 @@ public final class AgentRunner implements AutoCloseable {
         String sessionId = parent == null ? session.id() : currentSessionId.get();
         String turnId = parent == null ? UUID.randomUUID().toString() : parent.id();
         BooleanSupplier stopped = () -> cancelled.getAsBoolean() || (parent != null && parent.isCancelled());
-        SubagentSpec spec = new SubagentSpec(sessionId, turnId, prompt, subagentTimeout, subagentMaxIterations);
+        SubagentSpec spec = new SubagentSpec(sessionId, turnId, prompt, subagentTimeout, subagentMaxIterations,
+                SubagentProfile.EXPLORE);
         TurnEventSink sink = TurnEventSink.current();
         SubagentHandle child;
         try {

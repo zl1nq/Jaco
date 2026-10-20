@@ -1,6 +1,7 @@
 package com.jaco.agent;
 
 import com.jaco.config.ProviderConfig;
+import com.jaco.agent.subagent.SubagentProfile;
 import com.jaco.hook.HookChain;
 import com.jaco.llm.ChatRequest;
 import com.jaco.llm.ChatStream;
@@ -34,6 +35,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AgentRunnerSubagentTest {
 
@@ -97,10 +99,17 @@ class AgentRunnerSubagentTest {
                 new StreamChunk.Done("stop", null));
         FakeClient client = new FakeClient(List.of(s1, s2));
 
-        String report = runner(client).runSubagent("找找 x", () -> false);
+        AgentRunner agent = runner(client);
+        String report = agent.runSubagent("找找 x", () -> false);
 
         assertEquals("最终报告", report);
         assertEquals(2, client.requests.size());
+        assertEquals("explore", agent.subagentSnapshots().getFirst().profile());
+        assertTrue(agent.subagentCommand("").contains("[explore]"));
+        assertTrue(agent.subagentCommand(agent.subagentSnapshots().getFirst().id()).contains("[explore]"));
+        assertEquals(Role.SYSTEM, client.requests.getFirst().messages().getFirst().role());
+        assertTrue(client.requests.getFirst().messages().getFirst().content().contains("只读调查任务"));
+        assertThrows(UnsupportedOperationException.class, () -> SubagentProfile.EXPLORE.tools().add("write_file"));
 
         // 第一次请求只携带只读工具定义，且不含 task（禁止递归）
         Set<String> names = client.requests.get(0).tools().stream()
@@ -130,6 +139,25 @@ class AgentRunnerSubagentTest {
 
         String msgs = render(client.requests.get(1).messages());
         assertTrue(msgs.contains("ERROR: 子 agent 只允许只读工具"));
+    }
+
+    @Test
+    void exploreRejectsShellNetworkBackgroundAndRecursiveCallsAtExecutionBoundary() throws Exception {
+        List<String> denied = List.of("run_command", "web_fetch", "process_start", "process_poll", "process_stop", "task");
+        List<StreamChunk> chunks = new ArrayList<>();
+        for (int i = 0; i < denied.size(); i++) {
+            chunks.add(new StreamChunk.ToolCallDelta(i, "denied" + i, denied.get(i), "{}"));
+        }
+        chunks.add(new StreamChunk.Done("tool_calls", null));
+        FakeClient client = new FakeClient(List.of(TestStreams.of(chunks.toArray(StreamChunk[]::new)),
+                TestStreams.of(new StreamChunk.Delta("已拒绝越权调用"), new StreamChunk.Done("stop", null))));
+        assertEquals("已拒绝越权调用", runner(client).runSubagent("调查", () -> false));
+        List<Message> results = client.requests.get(1).messages().stream().filter(m -> m.role() == Role.TOOL).toList();
+        assertEquals(denied.size(), results.size());
+        for (int i = 0; i < results.size(); i++) {
+            assertEquals("denied" + i, results.get(i).toolCallId());
+            assertTrue(results.get(i).content().startsWith("ERROR: 子 agent 只允许只读工具"));
+        }
     }
 
     @Test

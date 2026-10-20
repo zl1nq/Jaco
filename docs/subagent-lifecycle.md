@@ -6,7 +6,8 @@
 
 | 类型 | 职责 |
 | --- | --- |
-| `SubagentSpec` | 固定父会话、父轮 ID、任务说明、总超时和迭代预算 |
+| `SubagentProfile` | 内置不可变预设，集中定义标识、系统提示和工具白名单；当前仅 `EXPLORE` |
+| `SubagentSpec` | 固定父会话、父轮 ID、任务说明、预设、总超时和迭代预算 |
 | `SubagentManager` | 注册、准入、监督执行、按父归属取消、关闭和记录淘汰 |
 | `SubagentHandle` | 暴露只读快照、停止请求及等待结果，不暴露可修改 Future |
 | `SubagentControl` | 同步状态变更、裁定完成竞争、登记资源和统计 |
@@ -15,6 +16,8 @@
 | `AgentLoopSupport` | 父子循环共用流消费、工具结果归档和上下文压缩 |
 
 `TurnHandle.id()` 是父轮标识。正常入口在父线程固定会话和轮次信息；直接调用 `runSubagent` 的嵌入场景分配临时轮次 ID，以传入的取消信号建立作用域。模型、工具沙箱等不可变执行依赖由 runner 持有，运行中不读取父会话字段。
+
+现有只读调查能力迁入 `SubagentProfile.EXPLORE`，对外标识为 `explore`。预设在 `SubagentSpec` 创建时固定，既用于模型请求的工具定义，也用于每次工具调用的执行白名单检查。原有五参数 `SubagentSpec` 构造入口保留并默认选择 `EXPLORE`；`task(prompt)` 和 `runSubagent` 接口不变，当前不接收外部预设名或工具子集。控制块在释放原始任务说明后仍保留预设标识，供 `/subagents` 查询已退出记录。
 
 ## 状态和退出原因
 
