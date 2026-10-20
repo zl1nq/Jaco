@@ -66,6 +66,10 @@ public final class ConsoleApp {
             printSessions();
             return true;
         }));
+        commands.put("subagents", new Command.Simple("subagents", "子任务状态和结果：/subagents [完整任务ID]", args -> {
+            println(agent.subagentCommand(args));
+            return true;
+        }));
         commands.put("switch", new Command.Simple("switch", "切换会话：/switch <会话id>（支持唯一前缀）", args -> {
             String id = args.strip();
             if (id.isEmpty()) {

@@ -1,6 +1,13 @@
 package com.jaco.agent;
 
 import com.jaco.config.ProviderConfig;
+import com.jaco.agent.subagent.StopReason;
+import com.jaco.agent.subagent.SubagentHandle;
+import com.jaco.agent.subagent.SubagentManager;
+import com.jaco.agent.subagent.SubagentResult;
+import com.jaco.agent.subagent.SubagentRunner;
+import com.jaco.agent.subagent.SubagentSpec;
+import com.jaco.agent.subagent.SubagentState;
 import com.jaco.hook.HookChain;
 import com.jaco.hook.HookVerdict;
 import com.jaco.llm.ChatRequest;
@@ -9,9 +16,7 @@ import com.jaco.llm.ChatStream;
 import com.jaco.llm.Message;
 import com.jaco.llm.OpenAiCompatClient;
 import com.jaco.llm.Role;
-import com.jaco.llm.StreamChunk;
 import com.jaco.llm.ToolCall;
-import com.jaco.llm.ToolDefinition;
 import com.jaco.llm.Usage;
 import com.jaco.session.Session;
 import com.jaco.session.SessionStore;
@@ -24,17 +29,20 @@ import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
+
+import static com.jaco.agent.AgentLoopSupport.isContextOverflow;
+import static com.jaco.agent.AgentLoopSupport.mergeUsage;
+import static com.jaco.agent.AgentLoopSupport.unicodePrefix;
 
 /**
  * Agent loop 的宿主与驱动者。核心信条：循环本体保持最小——
@@ -43,22 +51,13 @@ import java.util.function.BooleanSupplier;
  *
  * <p>loop 在独立线程运行，通过 TurnHandle 向消费方（TUI）吐 TurnEvent。
  */
-public final class AgentRunner {
+public final class AgentRunner implements AutoCloseable {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AgentRunner.class);
 
     public static final String DEFAULT_SYSTEM_PROMPT = """
             你是 jaco，一个运行在终端里的助手，可以调用工具读写文件、执行命令。
             回答简洁、直接，适合在命令行中阅读。
-            """;
-
-    /** 子 agent 的只读工具集；不含 task（禁止递归 spawn）与写/执行类工具。 */
-    private static final Set<String> SUBAGENT_TOOLS = Set.of("read_file", "list_dir", "grep", "find_files", "recall", "git_status", "git_diff");
-
-    private static final String SUBAGENT_SYSTEM_PROMPT = """
-            你是 jaco 的子 agent，被主 agent 委派执行一个只读调查任务。
-            你只能读取、搜索及使用只读 Git 工具，不能修改文件、不能执行任意 shell 命令。高效探索，不要漫无目的。
-            完成后输出结论报告：直接给答案与证据（文件路径:行号 等可验证引用），不要过程叙述，不要寒暄。
             """;
 
     private final OpenAiCompatClient client;
@@ -73,7 +72,14 @@ public final class AgentRunner {
     private final int maxIterations;
     private final long contextLimit;
     private final int maxToolResultChars;
-    private Session session;
+    private final AgentLoopSupport support;
+    private final SubagentRunner subagentRunner;
+    private final SubagentManager subagents = new SubagentManager();
+    private Duration subagentTimeout = Duration.ofMinutes(5);
+    private int subagentMaxIterations;
+    private final ThreadLocal<TurnHandle> currentTurn = new ThreadLocal<>();
+    private final ThreadLocal<String> currentSessionId = new ThreadLocal<>();
+    private volatile Session session;
     private long lastPromptTokens;
     private UserProfileStore userProfile;
     private String profileProject;
@@ -150,8 +156,12 @@ public final class AgentRunner {
         this.configuredSystemPrompt = configuredSystemPrompt;
         this.shellChoice = shellChoice;
         this.maxIterations = Math.max(1, maxIterations);
+        this.subagentMaxIterations = this.maxIterations;
         this.contextLimit = contextLimit;
         this.maxToolResultChars = maxToolResultChars;
+        this.support = new AgentLoopSupport(client, provider, hooks, sessions, contextLimit, maxToolResultChars, null);
+        this.subagentRunner = new SubagentRunner(client, provider, hooks, sessions, registry, sandbox,
+                workspaceRoot, shellChoice, contextLimit, maxToolResultChars);
     }
 
     public void start() {
@@ -168,7 +178,9 @@ public final class AgentRunner {
     }
 
     public void newSession() {
-        session = sessions.createNew();
+        Session target = sessions.createNew();
+        subagents.cancelSession(session.id());
+        session = target;
         lastPromptTokens = 0;
         profileTopics = Set.of();
         hooks.onSessionChanged();
@@ -277,6 +289,7 @@ public final class AgentRunner {
         if (target.id().equals(session.id())) {
             return "已是当前会话";
         }
+        subagents.cancelSession(session.id());
         session = target;
         lastPromptTokens = 0;
         restoreProfileTopics();
@@ -332,11 +345,18 @@ public final class AgentRunner {
     /** 启动一轮：loop 在后台线程运行，返回的事件句柄由调用方消费。 */
     public TurnHandle runTurn(String prompt) {
         TurnHandle handle = new TurnHandle();
+        handle.onCancel(() -> subagents.cancelTurn(handle.id(), StopReason.PARENT_CANCELLED));
+        Session owner = session;
         Thread thread = new Thread(() -> {
             TurnEventSink.install(handle);
+            currentTurn.set(handle);
+            currentSessionId.set(owner.id());
             try {
-                loop(prompt, handle);
+                loop(prompt, handle, owner);
             } finally {
+                subagents.cancelTurn(handle.id(), StopReason.SCOPE_CLOSED);
+                currentTurn.remove();
+                currentSessionId.remove();
                 TurnEventSink.clear();
             }
         }, "jaco-agent");
@@ -345,18 +365,19 @@ public final class AgentRunner {
         return handle;
     }
 
-    private void loop(String prompt, TurnHandle handle) {
+    private void loop(String prompt, TurnHandle handle, Session owner) {
         try {
+            if (handle.isCancelled()) return;
             String effective = hooks.onUserPromptSubmit(prompt);
             if (effective == null) {
-                sessions.save(session);
+                sessions.save(owner);
                 handle.emit(new TurnEvent.Done(null, null, false, true, null, 0));
                 return;
             }
             profileTopics = ProfileContextSelector.topics(prompt, profileTopics);
             String previousAssistant = "";
-            if (!session.messages().isEmpty()) {
-                Message previous = session.messages().get(session.messages().size() - 1);
+            if (!owner.messages().isEmpty()) {
+                Message previous = owner.messages().get(owner.messages().size() - 1);
                 if (previous.role() == Role.ASSISTANT && previous.content() != null) {
                     previousAssistant = previous.content();
                 }
@@ -366,10 +387,11 @@ public final class AgentRunner {
                         && Character.isLowSurrogate(previousAssistant.charAt(2000)) ? 1999 : 2000;
                 previousAssistant = previousAssistant.substring(0, end);
             }
-            session = session.withFirstPromptTitle(prompt);
-            session.messages().add(Message.user(effective));
+            owner = owner.withFirstPromptTitle(prompt);
+            if (session.id().equals(owner.id())) session = owner;
+            owner.messages().add(Message.user(effective));
 
-            ContextCompactor compactor = new ContextCompactor(sessions, session, contextLimit);
+            ContextCompactor compactor = new ContextCompactor(sessions, owner, contextLimit);
 
             Usage totalUsage = null;
             String finishReason = null;
@@ -385,16 +407,16 @@ public final class AgentRunner {
                 }
                 ChatStream stream = null;
                 try {
-                    var outcome = compactContext(compactor, session.messages(), lastPromptTokens, false,
+                    var outcome = support.compactContext(compactor, owner.messages(), lastPromptTokens, false,
                             notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
                     if (outcome.compacted()) {
-                        sessions.save(session);
+                        sessions.save(owner);
                         lastPromptTokens = outcome.tokensAfter();
                     }
                     if (handle.isCancelled()) { interrupted = true; break; }
                     ChatRequest request = new ChatRequest(
                             provider.model(),
-                            buildMessages(),
+                            buildMessages(owner),
                             provider.temperature(),
                             true,
                             new ChatRequest.StreamOptions(true),
@@ -403,7 +425,7 @@ public final class AgentRunner {
                     stream = client.chatStream(request);
                     handle.setCurrentStream(stream);
 
-                    IterationResult result = consumeStream(stream, handle, handle::isCancelled);
+                    AgentLoopSupport.IterationResult result = support.consumeStream(stream, handle, handle::isCancelled);
                     if (result.usage() != null) {
                         totalUsage = totalUsage == null ? result.usage() : mergeUsage(totalUsage, result.usage());
                         lastPromptTokens = result.usage().promptTokens();
@@ -412,14 +434,14 @@ public final class AgentRunner {
                         // 上下文超限是可恢复的：强制压缩后重试一次（估算与真实 token 的偏差兜底）
                         if (!overflowRetried && isContextOverflow(result.error())) {
                             overflowRetried = true;
-                            var forced = compactContext(compactor, session.messages(), 0, true,
+                            var forced = support.compactContext(compactor, owner.messages(), 0, true,
                                     notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
                             if (!forced.compacted()) {
                                 error = new IOException("上下文超限，压缩未能缩小请求；已保留当前进展", result.error());
                                 break;
                             }
                             lastPromptTokens = forced.tokensAfter();
-                            sessions.save(session);
+                            sessions.save(owner);
                             continue;
                         }
                         error = result.error();
@@ -432,22 +454,22 @@ public final class AgentRunner {
 
                     List<ToolCall> calls = result.toolCalls();
                     if (calls.isEmpty()) {
-                        session.messages().add(Message.assistant(result.content()));
+                        owner.messages().add(Message.assistant(result.content()));
                         finishReason = result.finishReason();
                         ChatResponse response = new ChatResponse(
                                 Message.assistant(result.content()), result.usage(), result.finishReason());
                         if (hooks.onStop(response)) {
-                            session.messages().add(Message.user("[onStop hook] 请继续"));
+                            owner.messages().add(Message.user("[onStop hook] 请继续"));
                             continue;
                         }
                         break;
                     }
 
-                    session.messages().add(new Message(
+                    owner.messages().add(new Message(
                             Role.ASSISTANT,
                             result.content().isEmpty() ? null : result.content(),
                             calls, null, null));
-                    executeTools(calls, handle);
+                    executeTools(calls, handle, owner);
                     if (handle.isCancelled()) {
                         interrupted = true;
                         break;
@@ -455,11 +477,11 @@ public final class AgentRunner {
                 } catch (IOException e) {
                     if (!overflowRetried && isContextOverflow(e)) {
                         overflowRetried = true;
-                        var forced = compactContext(compactor, session.messages(), 0, true,
+                        var forced = support.compactContext(compactor, owner.messages(), 0, true,
                                 notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
                         if (forced.compacted()) {
                             lastPromptTokens = forced.tokensAfter();
-                            sessions.save(session);
+                            sessions.save(owner);
                             continue;
                         }
                     }
@@ -478,11 +500,11 @@ public final class AgentRunner {
             if (handle.isCancelled()) {
                 interrupted = true;
             }
-            sessions.save(session);
+            sessions.save(owner);
             if (userProfile != null && userProfile.enabled() && !interrupted && error == null
                     && "stop".equals(finishReason)) {
                 try {
-                    userProfile.enqueue(prompt, previousAssistant, session.id(), profileProject);
+                    userProfile.enqueue(prompt, previousAssistant, owner.id(), profileProject);
                     var decision = ProfileExtractionPolicy.classify(prompt);
                     log.debug("画像提取策略：{} ({})", decision.action(), decision.reason());
                     boolean immediate = decision.action() == ProfileExtractionPolicy.Action.IMMEDIATE;
@@ -501,211 +523,125 @@ public final class AgentRunner {
             }
             handle.emit(new TurnEvent.Done(totalUsage, finishReason, interrupted, false, error, iterations));
         } catch (Exception fatal) {
-            sessions.save(session);
+            sessions.save(owner);
             handle.emit(new TurnEvent.Done(null, null, false, false, fatal, 0));
         }
     }
 
-    /**
-     * 子 agent 入口（由 TaskTool 调用，运行在父 loop 线程）：子 loop 跑在虚拟线程上，
-     * 本线程同步等待；父轮取消的中断会到达本线程，此时 interrupt 子线程并限时收尸。
-     * 子 agent 有独立运行状态及归档（不写父会话消息或父归档），只有最终报告回到父模型。
-     * 开始/结束各发一行 Notice（经父 loop 线程的事件槽），中间保持静默。
-     */
+    /** 同步兼容入口；生命周期及资源均交由管理器持有。 */
     public String runSubagent(String prompt, BooleanSupplier cancelled) {
+        return runManagedSubagent(prompt, cancelled);
+    }
+
+    public void configureSubagentTimeout(Duration timeout) {
+        if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("子任务超时必须为正数");
+        subagentTimeout = timeout;
+    }
+
+    public void configureSubagentLimits(Duration timeout, int iterations) {
+        if (iterations < 1) throw new IllegalArgumentException("子任务迭代上限必须为正数");
+        configureSubagentTimeout(timeout);
+        subagentMaxIterations = Math.min(iterations, maxIterations);
+    }
+
+    public List<SubagentHandle.Snapshot> subagentSnapshots() { return subagents.snapshots(); }
+
+    /** 交互命令只读取当前会话的结果；不会把历史报告注入模型上下文。 */
+    public String subagentCommand(String args) {
+        String id = args.strip();
+        String owner = session.id();
+        if (!id.isEmpty()) {
+            var child = subagents.find(id);
+            if (child == null || !child.snapshot().parentSessionId().equals(owner)) return "没有匹配的子任务";
+            var result = child.result();
+            return result == null ? child.id() + " " + child.snapshot().state()
+                    : child.id() + " " + result.exitReason() + " / " + result.stats().elapsedMillis() + "ms / "
+                    + (result.stats().usageAvailable() ? result.stats().totalTokens() + " tokens" : "token 用量未知")
+                    + "\n" + result.toToolResult();
+        }
+        StringBuilder text = new StringBuilder();
+        for (var snapshot : subagents.snapshots()) {
+            if (!snapshot.parentSessionId().equals(owner)) continue;
+            text.append(snapshot.id()).append(" ").append(snapshot.state()).append(" / ")
+                    .append(snapshot.phase()).append(" / ").append(snapshot.iterations()).append(" 次迭代");
+            text.append(" / ").append(snapshot.usageAvailable() ? snapshot.totalTokens() + " tokens" : "token 用量未知");
+            var handle = subagents.find(snapshot.id());
+            var result = handle == null ? null : handle.result();
+            if (result != null) text.append(" / ").append(result.exitReason());
+            if (snapshot.cleanupOverdue()) text.append(" / 清理超时，尚未确认退出");
+            text.append('\n');
+        }
+        return text.isEmpty() ? "（当前会话暂无子任务）" : text.toString().stripTrailing();
+    }
+
+    private String runManagedSubagent(String prompt, BooleanSupplier cancelled) {
+        TurnHandle parent = currentTurn.get();
+        String sessionId = parent == null ? session.id() : currentSessionId.get();
+        String turnId = parent == null ? UUID.randomUUID().toString() : parent.id();
+        BooleanSupplier stopped = () -> cancelled.getAsBoolean() || (parent != null && parent.isCancelled());
+        SubagentSpec spec = new SubagentSpec(sessionId, turnId, prompt, subagentTimeout, subagentMaxIterations);
         TurnEventSink sink = TurnEventSink.current();
-        if (sink != null) {
-            String brief = prompt.replace('\n', ' ').strip();
-            sink.emit(new TurnEvent.Notice("⟣ 子任务开始: "
-                    + (brief.length() > 50 ? brief.substring(0, 50) + "…" : brief)));
-        }
-        long start = System.currentTimeMillis();
-        AtomicInteger iterations = new AtomicInteger();
-        AtomicReference<String> report = new AtomicReference<>();
-        Thread worker = Thread.ofVirtual().name("jaco-subagent")
-                .start(() -> report.set(subagentLoop(prompt, cancelled, iterations)));
-        boolean interrupted = false;
-        while (worker.isAlive()) {
-            try {
-                worker.join(200);
-            } catch (InterruptedException e) {
-                interrupted = true;
-                break;
-            }
-        }
-        if (interrupted && worker.isAlive()) {
-            worker.interrupt();
-            try {
-                worker.join(2000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            if (worker.isAlive()) {
-                log.warn("子 agent 线程未在 2s 内退出");
-            }
-        }
-        if (sink != null) {
-            long secs = (System.currentTimeMillis() - start) / 1000;
-            sink.emit(new TurnEvent.Notice("⟣ 子任务结束: 耗时 " + secs + "s / "
-                    + iterations.get() + " 次迭代"));
-        }
-        String out = report.get();
-        return out != null ? out : "(子任务被中断)";
-    }
-
-    /** 子任务使用独立、非会话列表项的运行状态，压缩和 recall 共用其归档。 */
-    private String subagentLoop(String prompt, BooleanSupplier cancelled, AtomicInteger iterations) {
-        Session child = Session.create(session.id() + "-sub-" + UUID.randomUUID(), System.currentTimeMillis());
-        List<Message> messages = child.messages();
-        messages.add(Message.system(SUBAGENT_SYSTEM_PROMPT));
-        messages.add(Message.user(prompt));
-        List<ToolDefinition> defs = registry.definitions(SUBAGENT_TOOLS);
-        ContextCompactor compactor = new ContextCompactor(sessions, child, contextLimit);
-        long promptTokens = 0;
-        boolean overflowRetried = false;
+        SubagentHandle child;
         try {
-            for (int i = 0; i < maxIterations && !cancelled.getAsBoolean(); i++) {
-                iterations.set(i + 1);
-                ChatStream stream = null;
+            child = subagents.start(spec, stopped, subagentRunner::run);
+        } catch (IllegalStateException e) {
+            return "子任务失败: " + e.getMessage();
+        }
+        if (sink != null && !stopped.getAsBoolean()) {
+            sink.emit(new TurnEvent.Notice("⟣ 子任务开始: " + unicodePrefix(prompt.replace('\n', ' ').strip(), 50)
+                    + " / " + child.id()));
+        }
+        boolean interrupted = false;
+        try {
+            // 结束等待和结束任务是两件事；超出宽限时间后仍由管理器持有执行资源。
+            while (true) {
+                if (stopped.getAsBoolean()) {
+                    child.requestStop(StopReason.PARENT_CANCELLED);
+                    break;
+                }
+                if (child.snapshot().state() == SubagentState.CANCELLING) break;
                 try {
-                    var outcome = compactContext(compactor, messages, promptTokens, false, n -> {}, cancelled);
-                    if (outcome.compacted()) promptTokens = outcome.tokensAfter();
-                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) return "(子任务被中断)";
-                    ChatRequest request = new ChatRequest(provider.model(), List.copyOf(messages), provider.temperature(),
-                            true, new ChatRequest.StreamOptions(true), defs);
-                    hooks.onBeforeRequest(request);
-                    stream = client.chatStream(request);
-                    IterationResult result = consumeStream(stream, null, cancelled);
-                    if (result.usage() != null) promptTokens = result.usage().promptTokens();
-                    if (result.error() != null) {
-                        if (!overflowRetried && isContextOverflow(result.error())) {
-                            overflowRetried = true;
-                            var forced = compactContext(compactor, messages, 0, true, n -> {}, cancelled);
-                            if (forced.compacted()) { promptTokens = forced.tokensAfter(); continue; }
-                            return subagentFailure("上下文超限，压缩未能缩小请求", messages);
-                        }
-                        return subagentFailure(result.error().getMessage() != null
-                                ? result.error().getMessage() : result.error().getClass().getSimpleName(), messages);
-                    }
-                    if (cancelled.getAsBoolean()) {
-                        return "(子任务被中断)";
-                    }
-                    List<ToolCall> calls = result.toolCalls();
-                    if (calls.isEmpty()) {
-                        return result.content().isBlank() ? "(子任务无输出)" : result.content();
-                    }
-                    messages.add(new Message(Role.ASSISTANT,
-                            result.content().isEmpty() ? null : result.content(), calls, null, null));
-                    executeSubagentTools(calls, child, cancelled);
-                } catch (IOException e) {
-                    if (!overflowRetried && isContextOverflow(e)) {
-                        overflowRetried = true;
-                        var forced = compactContext(compactor, messages, 0, true, n -> {}, cancelled);
-                        if (forced.compacted()) { promptTokens = forced.tokensAfter(); continue; }
-                    }
-                    return subagentFailure(e.getMessage(), messages);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return "(子任务被中断)";
-                } finally {
-                    if (stream != null) {
-                        stream.cancel();
-                    }
-                }
+                    SubagentResult result = child.await(Duration.ofMillis(100));
+                    emitSubagentEnd(sink, stopped, sessionId, result);
+                    return result.toToolResult();
+                } catch (TimeoutException ignored) { }
             }
-        } catch (RuntimeException e) {
-            return subagentFailure(e.getMessage(), messages);
+        } catch (InterruptedException e) {
+            interrupted = true;
+            child.requestStop(StopReason.PARENT_CANCELLED);
         }
-        return cancelled.getAsBoolean() ? "(子任务被中断)" : subagentFailure("达到迭代上限 " + maxIterations, messages);
-    }
-
-    private String subagentFailure(String reason, List<Message> messages) {
-        StringBuilder progress = new StringBuilder("子任务失败: ").append(unicodePrefix(String.valueOf(reason), 512));
-        int start = Math.max(0, messages.size() - 6);
-        for (int i = start; i < messages.size(); i++) {
-            Message m = messages.get(i);
-            if ((m.role() == Role.ASSISTANT || m.role() == Role.TOOL) && m.content() != null && !m.content().isBlank()) {
-                progress.append("\n部分进展（资料）: ").append(unicodePrefix(m.content(), 500));
-            }
-        }
-        return progress.toString();
-    }
-
-    /** 子 agent 的工具执行：归档及 recall 严格使用本次子任务的运行状态。 */
-    private void executeSubagentTools(List<ToolCall> calls, Session child, BooleanSupplier cancelled) {
-        ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
-                new AtomicReference<>(), cancelled, sessions.archivePath(child), maxToolResultChars);
-        for (ToolCall call : calls) {
-            String name = call.function().name() != null ? call.function().name() : "?";
-            String result;
-            if (!SUBAGENT_TOOLS.contains(name)) {
-                result = "ERROR: 子 agent 只允许只读工具 " + SUBAGENT_TOOLS;
-            } else {
+        long waitStart = System.nanoTime();
+        try {
+            while (true) {
+                long remaining = subagents.cancelGrace().toNanos() - (System.nanoTime() - waitStart);
+                if (remaining <= 0) break;
                 try {
-                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    result = registry.execute(call, ctx);
+                    var result = child.await(Duration.ofNanos(remaining));
+                    emitSubagentEnd(sink, stopped, sessionId, result);
+                    return result.toToolResult();
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    result = "ERROR: interrupted by user";
-                } catch (Exception e) {
-                    result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-                }
+                    interrupted = true;
+                } catch (TimeoutException e) { break; }
             }
-            result = gateToolResult(child, result);
-            child.messages().add(Message.toolResult(call.id(), result));
+            return "子任务仍在取消中（ID: " + child.id() + "），尚未确认退出";
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
         }
     }
 
-    /**
-     * 消费一次 LLM 流：转发正文增量、累积 tool_calls、聚合 usage。
-     * handle 为 null 时静默运行（子 agent）：不发事件，取消改查 cancelled。
-     */
-    private IterationResult consumeStream(ChatStream stream, TurnHandle handle,
-                                          BooleanSupplier cancelled) throws InterruptedException {
-        StringBuilder content = new StringBuilder();
-        ToolCallAccumulator accumulator = new ToolCallAccumulator();
-        String finishReason = null;
-        Usage usage = null;
-        Throwable error = null;
-
-        while (true) {
-            StreamChunk chunk = stream.poll(200);
-            if (cancelled.getAsBoolean()) {
-                break;
-            }
-            if (chunk == null) {
-                continue;
-            }
-            if (chunk instanceof StreamChunk.Delta d) {
-                content.append(d.text());
-                if (handle != null) {
-                    handle.emit(new TurnEvent.Delta(d.text()));
-                }
-            } else if (chunk instanceof StreamChunk.ToolCallDelta t) {
-                accumulator.add(t);
-            } else if (chunk instanceof StreamChunk.Done d) {
-                finishReason = d.finishReason();
-                usage = d.usage();
-                break;
-            } else if (chunk instanceof StreamChunk.Error e) {
-                if (!cancelled.getAsBoolean()) {
-                    error = e.cause() != null ? e.cause() : new RuntimeException(e.message());
-                }
-                break;
-            }
-        }
-        if (handle != null && content.length() > 0 && !cancelled.getAsBoolean()
-                && error == null && !accumulator.isEmpty()) {
-            // 少数模型在 tool_calls 响应里也夹带正文：保留进事件流但不进最终 assistant 消息
-            handle.emit(new TurnEvent.Delta("\n"));
-        }
-        return new IterationResult(content.toString(), accumulator.build(), finishReason, usage, error);
+    private void emitSubagentEnd(TurnEventSink sink, BooleanSupplier cancelled,
+                                 String owner, SubagentResult result) {
+        if (sink == null || cancelled.getAsBoolean() || !owner.equals(session.id())) return;
+        sink.emit(new TurnEvent.Notice("⟣ 子任务结束: 耗时 " + result.stats().elapsedMillis() / 1000
+                + "s / " + result.stats().iterations() + " 次迭代 / " + result.exitReason() + " / " + result.id()));
     }
+
+    @Override public void close() { subagents.close(); }
 
     /** 串行执行工具；每个 tool_call 都必须产生 tool result（协议要求成对）。 */
-    private void executeTools(List<ToolCall> calls, TurnHandle handle) {
+    private void executeTools(List<ToolCall> calls, TurnHandle handle, Session owner) {
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
-                handle.processRef(), handle::isCancelled, sessions.archivePath(session), maxToolResultChars);
+                handle.processRef(), handle::isCancelled, sessions.archivePath(owner), maxToolResultChars);
         for (ToolCall call : calls) {
             String name = call.function().name() != null ? call.function().name() : "?";
             String summary = registry.summaryOf(call);
@@ -739,71 +675,15 @@ public final class AgentRunner {
                 result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
                 ok = false;
             }
-            result = gateToolResult(session, result);
-            session.messages().add(Message.toolResult(call.id(), result));
+            result = support.gateToolResult(owner, result);
+            owner.messages().add(Message.toolResult(call.id(), result));
             hooks.onAfterToolCall(call, result);
             handle.emit(new TurnEvent.ToolCallEnd(name, ok, summarizeResult(result)));
         }
     }
 
-    /**
-     * 单条工具输出的硬闸门：超限即整条落盘归档，回填头尾预览。在结果入口处生效，
-     * 不依赖轮开始的压缩周期——任何时刻消息列表里的单条 tool_result 都有上界。
-     */
-    private String gateToolResult(Session owner, String result) {
-        if (result.length() <= maxToolResultChars) {
-            return result;
-        }
-        String status;
-        try {
-            sessions.appendArchivedOutput(owner, result);
-            status = "工具输出过长，完整内容已归档，可用 recall 检索";
-        } catch (UncheckedIOException e) {
-            log.warn("工具输出归档失败: {}", e.getMessage());
-            status = "工具输出过长，归档失败；仅保留预览，无法恢复，请缩小范围重新读取";
-        }
-        return clipMiddle(result, maxToolResultChars, status);
-    }
-
-    /** 纯裁剪不承诺归档；提示、分隔符和 Unicode 边界都计入总预算。 */
     static String clipMiddle(String text, int budget) {
-        return clipMiddle(text, budget, "工具输出过长，仅保留头尾预览");
-    }
-
-    private static String clipMiddle(String text, int budget, String status) {
-        if (text.length() <= budget) return text;
-        String header = "(" + status + "，原 " + text.length() + " 字符)\n";
-        String gap = "\n…(中间省略)…\n";
-        if (header.length() + gap.length() > budget) return unicodePrefix("(结果已裁剪)", Math.max(0, budget));
-        int available = budget - header.length() - gap.length();
-        String head = unicodePrefix(text, available / 2);
-        int tailStart = text.length() - (available - available / 2);
-        if (tailStart < text.length() && tailStart > 0 && Character.isLowSurrogate(text.charAt(tailStart))
-                && Character.isHighSurrogate(text.charAt(tailStart - 1))) tailStart++;
-        return header + head + gap + text.substring(tailStart);
-    }
-
-    private static String unicodePrefix(String text, int limit) {
-        int end = Math.min(text.length(), limit);
-        if (end > 0 && end < text.length() && Character.isHighSurrogate(text.charAt(end - 1))
-                && Character.isLowSurrogate(text.charAt(end))) end--;
-        return text.substring(0, end);
-    }
-
-    private ContextCompactor.Outcome compactContext(ContextCompactor compactor, List<Message> messages,
-            long promptTokens, boolean forced, java.util.function.Consumer<String> notices, BooleanSupplier cancelled) {
-        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
-            long tokens = ContextCompactor.estimateTokens(messages);
-            return new ContextCompactor.Outcome(false, tokens, tokens);
-        }
-        try {
-            return forced ? compactor.forceCompact(messages, notices, old -> summarizeOldMessages(old, cancelled))
-                    : compactor.compactIfNeeded(messages, promptTokens, notices, old -> summarizeOldMessages(old, cancelled));
-        } catch (UncheckedIOException e) {
-            notices.accept("上下文归档失败，保留现有消息：" + e.getMessage());
-            long tokens = ContextCompactor.estimateTokens(messages);
-            return new ContextCompactor.Outcome(false, tokens, tokens);
-        }
+        return AgentLoopSupport.clipMiddle(text, budget);
     }
 
     private String summarizeResult(String result) {
@@ -816,104 +696,10 @@ public final class AgentRunner {
         return lineCount > 1 ? s + " …(" + lineCount + " 行)" : s;
     }
 
-    /** 识别"上下文超限"类错误：各家措辞不一，按关键词粗匹配。 */
-    private static boolean isContextOverflow(Throwable t) {
-        String msg = t.getMessage();
-        if (msg == null) {
-            return false;
-        }
-        String m = msg.toLowerCase();
-        return m.contains("context length") || m.contains("context_length") || m.contains("maximum context")
-                || m.contains("too long") || m.contains("too many tokens") || m.contains("reduce the length");
-    }
-
-    private Usage mergeUsage(Usage a, Usage b) {
-        return new Usage(
-                a.promptTokens() + b.promptTokens(),
-                a.completionTokens() + b.completionTokens(),
-                a.totalTokens() + b.totalTokens());
-    }
-
-    /** 有界、可取消的摘要调用；失败时由压缩器降级为已归档内容的线索。 */
-    private String summarizeOldMessages(List<Message> oldMessages, BooleanSupplier cancelled) {
-        StringBuilder transcript = new StringBuilder();
-        int inputLimit = (int) Math.min(12000, Math.max(0, contextLimit / 3));
-        if (inputLimit < 128) throw new IllegalStateException("摘要输入预算不足");
-        for (Message m : oldMessages) {
-            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new IllegalStateException("摘要被取消");
-            String who = switch (m.role()) {
-                case USER -> "用户";
-                case ASSISTANT -> "assistant";
-                case TOOL -> "工具结果";
-                case SYSTEM -> "system";
-            };
-            String text = m.content() != null ? m.content() : "";
-            if (m.toolCalls() != null) {
-                StringBuilder calls = new StringBuilder();
-                for (var tc : m.toolCalls()) {
-                    if (calls.length() > 0) {
-                        calls.append("; ");
-                    }
-                    calls.append(tc.function().name()).append("(")
-                            .append(tc.function().arguments() != null && tc.function().arguments().length() > 200
-                                    ? tc.function().arguments().substring(0, 200) + "…"
-                                    : tc.function().arguments())
-                            .append(")");
-                }
-                text = text + "[调用工具: " + calls + "]";
-            }
-            if (text.length() > 4000) {
-                text = text.substring(0, 4000) + "…(截断)";
-            }
-            transcript.append(who).append(": ").append(text.replace('\n', ' ')).append("\n");
-            if (transcript.length() >= inputLimit) break;
-        }
-        ChatRequest request = new ChatRequest(
-                provider.model(),
-                List.of(
-                        Message.system("""
-                                你是对话摘要器。把对话历史总结成结构化要点，供后续对话作为上下文使用。
-                                必须包含：用户的当前目标、已做出的关键决定、已完成的文件改动或执行过的命令、未完成事项。
-                                只输出要点，使用简洁中文，不要客套。"""),
-                        Message.user(unicodePrefix(transcript.toString(), inputLimit))),
-                0.3,
-                true,
-                new ChatRequest.StreamOptions(true),
-                null);
-        ChatStream stream = null;
-        try {
-            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new IllegalStateException("摘要被取消");
-            hooks.onBeforeRequest(request);
-            stream = client.chatStream(request);
-            StringBuilder summary = new StringBuilder();
-            while (true) {
-                if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new IllegalStateException("摘要被取消");
-                StreamChunk chunk = stream.poll(200);
-                if (chunk instanceof StreamChunk.Delta d) {
-                    summary.append(d.text());
-                    if (summary.length() >= 4000) break;
-                } else if (chunk instanceof StreamChunk.Done || chunk instanceof StreamChunk.Error e) {
-                    if (chunk instanceof StreamChunk.Error err) {
-                        throw new IllegalStateException(err.message());
-                    }
-                    break;
-                }
-            }
-            return unicodePrefix(summary.toString(), 4000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("摘要被中断", e);
-        } catch (IOException e) {
-            throw new IllegalStateException("摘要调用失败: " + e.getMessage(), e);
-        } finally {
-            if (stream != null) stream.cancel();
-        }
-    }
-
-    private List<Message> buildMessages() {
+    private List<Message> buildMessages(Session owner) {
         List<Message> messages = new ArrayList<>();
         messages.add(Message.system(buildSystemPrompt()));
-        messages.addAll(session.messages());
+        messages.addAll(owner.messages());
         return messages;
     }
 
@@ -967,10 +753,4 @@ public final class AgentRunner {
                 """.formatted(workspaceRoot, System.getProperty("os.name"), shell, LocalDate.now());
     }
 
-    private record IterationResult(String content,
-                                   List<ToolCall> toolCalls,
-                                   String finishReason,
-                                   Usage usage,
-                                   Throwable error) {
-    }
 }

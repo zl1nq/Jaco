@@ -100,6 +100,7 @@ java -jar /path/to/jaco/target/jaco.jar
 | `/help` | 显示可用命令 |
 | `/new` | 创建新会话，清空当前上下文与权限放行记录 |
 | `/sessions` | 按新到旧列出会话 ID、标题和消息数，`*` 标记当前会话 |
+| `/subagents [完整任务 ID]` | 查看当前会话的子任务状态；指定 ID 查看已退出任务的结果和用量 |
 | `/switch <会话 ID>` | 切换会话并清空权限放行记录，支持唯一 ID 前缀 |
 | `/delete <会话 ID>` | 删除历史会话及归档，支持唯一 ID 前缀；需确认，不能删除当前会话 |
 | `/memory` | 查看用户画像、条目 ID、类别和作用范围 |
@@ -265,6 +266,12 @@ Git 查询禁用分页器、颜色、可选索引锁、外部 diff、textconv、
 
 子 agent 只能使用 `read_file`、`list_dir`、`grep`、`find_files`、`recall`、`git_status`、`git_diff`，不能写文件、执行任意 shell 命令或递归创建子 agent。每次运行拥有唯一 ID、独立消息、token/压缩状态及 `<父会话 ID>-sub-<UUID>.archive.jsonl` 归档；不生成可切换的会话记录。子任务的 `recall` 只读取本次归档，不能读父会话或其他子任务归档。中间探索不进入父会话上下文，最终报告作为工具结果返回；失败时附带有界的部分进展。
 
+子任务以“逻辑进程”管理：固定绑定父会话和父轮次，状态为 `CREATED`、`QUEUED`、`RUNNING`、`CANCELLING`、`EXITED`；退出原因独立区分成功、失败、取消、超时、预算耗尽和应用关闭。`task` 仍同步等待结果，每个应用实例最多一个活动子任务；已有任务仍在运行或取消时，新任务直接拒绝，当前不提供等待队列或并行调度。
+
+整体超时默认 300 秒，覆盖模型请求、工具执行和上下文压缩。父轮取消、新建会话、成功切换到其他会话及退出应用都会请求停止所属任务；切换失败或切换到当前会话不影响任务。取消会中断执行线程、关闭已登记的模型流（包括摘要请求），并尽力终止受管工具进程。取消等待最多 2 秒；未确认执行线程和取消清理线程退出时保留 `CANCELLING` 及活动槽位，父调用返回“仍在取消中”，不会伪装成已退出。Java 同进程线程不能安全强杀，应用关闭也只进行有时限的清理。
+
+`/subagents` 列出当前会话的任务 ID、状态、阶段、迭代数和已知 token 用量；`/subagents <完整任务 ID>` 查看最终结果。用量包含子任务调查与压缩请求，仅统计服务端已返回的 usage，缺失时显示未知。成功报告最多保留 16000 字符，超出时明确标记截断；失败、取消和超时保留最多 4096 字符的部分进展。每个实例最多保留 32 条已退出记录，读取不删除记录，最早完成的记录先淘汰；活动记录不淘汰。运行状态和最终结果仅保存在内存中，应用重启后不恢复，淘汰结果不删除归档。详细实现约定见 [子任务生命周期设计](docs/subagent-lifecycle.md)。
+
 ## 配置参考
 
 ### 模型服务
@@ -286,6 +293,8 @@ shell: auto
 max_iterations: 25
 context_limit: 65536
 max_tool_result_chars: 8000
+subagent_timeout_seconds: 300
+subagent_max_iterations: 25
 workspace:
   extra_roots:
     - D:/other-project
@@ -299,6 +308,8 @@ workspace:
 | `max_iterations` | `25` | 单轮最大模型调用次数 |
 | `context_limit` | `65536` | 上下文压缩的 token 基准，应按模型窗口调整 |
 | `max_tool_result_chars` | `8000` | 单条工具输出的归档触发字符数 |
+| `subagent_timeout_seconds` | `300` | 子任务整体超时，单位秒，包含上下文压缩 |
+| `subagent_max_iterations` | 继承 `max_iterations` | 子任务调查模型调用上限，可单独收紧，不超过父配置；摘要请求不计迭代但计入耗时和已知 token 用量 |
 | `workspace.extra_roots` | 空列表 | 文件工具允许访问的额外目录 |
 
 完整字段定义见 [JacoConfig](src/main/java/com/jaco/config/JacoConfig.java) 和 [ProviderConfig](src/main/java/com/jaco/config/ProviderConfig.java)。
@@ -337,7 +348,7 @@ JACO 用两层机制控制发送给模型的上下文体积：
 | 包 | 职责 |
 | --- | --- |
 | `tui` | 基于 JLine 3 的 REPL，消费 `TurnEvent`，处理渲染、确认、命令和中断 |
-| `agent` | `AgentRunner` 驱动工具循环与只读子 agent；`ContextCompactor` 管理压缩与归档 |
+| `agent` | `AgentRunner` 驱动父工具循环；`AgentLoopSupport` 复用流消费、压缩与归档；`subagent` 包管理只读子任务生命周期 |
 | `llm` | 手写 OpenAI 兼容 SSE 客户端，处理流式响应、工具调用增量、重试和取消 |
 | `tool` | 工具接口与注册表、15 个内置工具、网页抓取、后台任务管理、权限钩子和文件路径沙箱 |
 | `render` | Markdown 流式渲染、代码高亮、表格对齐与 CJK 显示宽度计算 |
