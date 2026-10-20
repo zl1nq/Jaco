@@ -140,7 +140,7 @@ class AgentRunnerSubagentTest {
         assertEquals("old", java.nio.file.Files.readString(tmp.resolve("x")));
 
         String msgs = render(client.requests.get(1).messages());
-        assertTrue(msgs.contains("ERROR: 子 agent 只允许只读工具"));
+        assertTrue(msgs.contains("ERROR: 子 agent 本次只允许工具"));
     }
 
     @Test
@@ -158,7 +158,7 @@ class AgentRunnerSubagentTest {
         assertEquals(denied.size(), results.size());
         for (int i = 0; i < results.size(); i++) {
             assertEquals("denied" + i, results.get(i).toolCallId());
-            assertTrue(results.get(i).content().startsWith("ERROR: 子 agent 只允许只读工具"));
+            assertTrue(results.get(i).content().startsWith("ERROR: 子 agent 本次只允许工具"));
         }
     }
 
@@ -179,7 +179,7 @@ class AgentRunnerSubagentTest {
                     .map(t -> t.function().name()).toList());
             var results = client.requests.get(1).messages().stream().filter(m -> m.role() == Role.TOOL).toList();
             assertTrue(results.get(0).content().contains("ORIGINAL_CONTENT"));
-            assertTrue(results.get(1).content().startsWith("ERROR: 子 agent 只允许只读工具"));
+            assertTrue(results.get(1).content().startsWith("ERROR: 子 agent 本次只允许工具"));
             assertFalse(results.get(1).content().contains("ORIGINAL_CONTENT"));
             var snapshot = agent.subagentSnapshots().getFirst();
             assertEquals(Set.of("read_file"), snapshot.tools());

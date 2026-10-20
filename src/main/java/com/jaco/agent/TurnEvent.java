@@ -15,18 +15,22 @@ public sealed interface TurnEvent {
     }
 
     /** 即将执行一个工具（已过权限闸门或正在等待确认）。 */
-    record ToolCallStart(String tool, String summary) implements TurnEvent {
+    record ToolCallStart(String tool, String summary, String taskId) implements TurnEvent {
+        public ToolCallStart(String tool, String summary) { this(tool, summary, null); }
     }
 
-    record ToolCallEnd(String tool, boolean ok, String summary) implements TurnEvent {
+    record ToolCallEnd(String tool, boolean ok, String summary, String taskId) implements TurnEvent {
+        public ToolCallEnd(String tool, boolean ok, String summary) { this(tool, ok, summary, null); }
     }
 
     /** 文件工具只读准备后的修改预览，先于权限确认和写入。 */
-    record ToolPreview(String text) implements TurnEvent {
+    record ToolPreview(String text, String taskId) implements TurnEvent {
+        public ToolPreview(String text) { this(text, null); }
     }
 
     /** 需要用户确认。loop 线程阻塞在 resolver 上，TUI 用 "y"/"a"/"n" 应答。 */
-    record ApprovalRequest(String tool, String detail, Consumer<String> resolver) implements TurnEvent {
+    record ApprovalRequest(String tool, String detail, Consumer<String> resolver, String taskId) implements TurnEvent {
+        public ApprovalRequest(String tool, String detail, Consumer<String> resolver) { this(tool, detail, resolver, null); }
     }
 
     /** 非正文的状态提示（如上下文压缩进度）。 */

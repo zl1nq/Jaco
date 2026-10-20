@@ -43,6 +43,7 @@ public final class PermissionHook implements AgentHook {
     private static final Set<String> READ_ONLY = Set.of("read_file", "list_dir", "grep", "find_files", "recall", "process_poll", "git_status", "git_diff");
 
     private final Set<String> sessionAllowed = ConcurrentHashMap.newKeySet();
+    private long generation;
 
     @Override
     public HookVerdict onBeforeToolCall(ToolCall call) {
@@ -78,17 +79,24 @@ public final class PermissionHook implements AgentHook {
             return HookVerdict.deny("没有可用的确认渠道");
         }
         CompletableFuture<String> answer = new CompletableFuture<>();
+        long askedGeneration;
+        synchronized (this) { askedGeneration = generation; }
         sink.emit(new TurnEvent.ApprovalRequest(call.function().name(), detailOf(call), answer::complete));
         try {
             String response = await(answer, sink);
-            return switch (response) {
-                case "y" -> HookVerdict.allow();
-                case "a" -> {
-                    sessionAllowed.add(allowanceKey);
-                    yield HookVerdict.allow();
+            synchronized (this) {
+                if (askedGeneration != generation || sink.cancelled() || Thread.currentThread().isInterrupted()) {
+                    return HookVerdict.deny("被用户中断或会话已切换");
                 }
-                default -> HookVerdict.deny("用户拒绝执行");
-            };
+                return switch (response) {
+                    case "y" -> HookVerdict.allow();
+                    case "a" -> {
+                        sessionAllowed.add(allowanceKey);
+                        yield HookVerdict.allow();
+                    }
+                    default -> HookVerdict.deny("用户拒绝执行");
+                };
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return HookVerdict.deny("被用户中断");
@@ -138,7 +146,8 @@ public final class PermissionHook implements AgentHook {
     }
 
     /** 新建或切换会话时清空放行记录。 */
-    public void resetSession() {
+    public synchronized void resetSession() {
+        generation++;
         sessionAllowed.clear();
     }
 }

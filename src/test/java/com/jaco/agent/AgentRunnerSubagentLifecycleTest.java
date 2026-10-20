@@ -108,14 +108,14 @@ class AgentRunnerSubagentLifecycleTest {
             assertEquals(4, requests.size());
             var taskSchema = requests.getFirst().tools().stream().filter(t -> t.function().name().equals("task"))
                     .findFirst().orElseThrow().function().parameters();
-            assertEquals("[\"explore\"]", taskSchema.path("properties").path("profile").path("enum").toString());
+            assertEquals("[\"explore\",\"edit\"]", taskSchema.path("properties").path("profile").path("enum").toString());
             assertTrue(taskSchema.path("properties").has("tools"));
             assertNull(requests.get(1).tools());
             assertTrue(requests.get(1).messages().getFirst().content().contains("无，只根据任务说明回答"));
             var rejected = requests.get(2).messages().stream().filter(m -> m.role() == Role.TOOL).toList();
             assertEquals(1, rejected.size());
             assertEquals("denied", rejected.getFirst().toolCallId());
-            assertTrue(rejected.getFirst().content().startsWith("ERROR: 子 agent 只允许只读工具"));
+            assertTrue(rejected.getFirst().content().startsWith("ERROR: 子 agent 本次只允许工具"));
             assertFalse(rejected.getFirst().content().contains("不应读取的内容"));
             var snapshot = agent.subagentSnapshots().getFirst();
             assertTrue(snapshot.tools().isEmpty());

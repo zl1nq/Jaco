@@ -333,9 +333,10 @@ public final class ConsoleApp {
                         sawOutput = true;
                     }
                     flushPending(renderer, pending);
-                    println(ANSI_YELLOW + "⏺ " + s.tool() + ANSI_RESET + ANSI_DIM + "(" + s.summary() + ")" + ANSI_RESET);
+                    println(ANSI_YELLOW + "⏺ " + origin(s.taskId()) + s.tool() + ANSI_RESET + ANSI_DIM + "(" + s.summary() + ")" + ANSI_RESET);
                 } else if (event instanceof TurnEvent.ToolPreview preview) {
                     flushPending(renderer, pending);
+                    if (preview.taskId() != null) println(ANSI_DIM + origin(preview.taskId()) + "修改预览" + ANSI_RESET);
                     for (String line : preview.text().split("\n")) {
                         String color = line.startsWith("+") ? ANSI_GREEN
                                 : line.startsWith("-") ? ANSI_RED : ANSI_DIM;
@@ -345,7 +346,7 @@ public final class ConsoleApp {
                     // 结果预览挂一条竖轨，视觉上归属上方的 ⏺
                     String[] lines = e.summary().split("\\n");
                     String rail = e.ok() ? ANSI_DIM + "  ╰─ " : ANSI_RED + "  ✗ ";
-                    println(rail + (e.ok() ? ANSI_DIM : "") + lines[0] + ANSI_RESET);
+                    println(rail + (e.ok() ? ANSI_DIM : "") + origin(e.taskId()) + lines[0] + ANSI_RESET);
                     for (int i = 1; i < lines.length; i++) {
                         println(ANSI_DIM + "  │ " + lines[i] + ANSI_RESET);
                     }
@@ -450,6 +451,7 @@ public final class ConsoleApp {
 
     private String askApproval(TurnEvent.ApprovalRequest request) {
         println(ANSI_YELLOW + "╭─ 需要确认 ─────────────────" + ANSI_RESET);
+        if (request.taskId() != null) println(ANSI_YELLOW + "│ " + ANSI_RESET + origin(request.taskId()));
         println(ANSI_YELLOW + "│ " + ANSI_RESET + request.detail());
         String approval = request.tool().equals("web_fetch") ? " y=本次 · a=本会话同源站点放行 · n=拒绝"
                 : " y=本次 · a=本会话放行 · n=拒绝";
@@ -468,6 +470,10 @@ public final class ConsoleApp {
                 return line;
             }
         }
+    }
+
+    private static String origin(String taskId) {
+        return taskId == null ? "" : "[子任务 " + taskId + "] ";
     }
 
     /** 把不完整的尾行按完整行渲染输出，并冲出渲染器的表格/挂起缓冲（Done/中断/工具开始前调用）。 */

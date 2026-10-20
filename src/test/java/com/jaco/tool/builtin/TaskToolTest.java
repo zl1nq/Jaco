@@ -78,7 +78,7 @@ class TaskToolTest {
         AtomicInteger calls = new AtomicInteger();
         tool.bind((request, cancelled) -> { calls.incrementAndGet(); return "不应执行"; });
         for (String fields : List.of(
-                "\"profile\":\"edit\"", "\"profile\":\"\"", "\"profile\":null", "\"profile\":3",
+                "\"profile\":\"review\"", "\"profile\":\"\"", "\"profile\":null", "\"profile\":3",
                 "\"tools\":null", "\"tools\":\"grep\"", "\"tools\":{}", "\"tools\":[null]",
                 "\"tools\":[3]", "\"tools\":[\" \"]",
                 "\"tools\":[\"unknown\"]", "\"tools\":[\"read_file\",\"write_file\"]",
@@ -96,9 +96,9 @@ class TaskToolTest {
     void schemaAdvertisesOptionalPresetAndToolChoices() {
         var schema = new TaskTool().schema();
         assertEquals("[\"prompt\"]", schema.path("required").toString());
-        assertEquals("[\"explore\"]", schema.path("properties").path("profile").path("enum").toString());
+        assertEquals("[\"explore\",\"edit\"]", schema.path("properties").path("profile").path("enum").toString());
         var toolNames = schema.path("properties").path("tools").path("items").path("enum");
-        assertEquals(7, toolNames.size());
+        assertEquals(9, toolNames.size());
         assertTrue(toolNames.toString().contains("read_file"));
         assertTrue(toolNames.toString().contains("git_diff"));
         assertTrue(new TaskTool().summary(MAPPER.createObjectNode().put("prompt", "调查")).contains("profile=explore"));

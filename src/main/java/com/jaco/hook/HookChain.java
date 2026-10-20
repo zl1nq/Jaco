@@ -3,6 +3,7 @@ package com.jaco.hook;
 import com.jaco.llm.ChatRequest;
 import com.jaco.llm.ChatResponse;
 import com.jaco.llm.ToolCall;
+import com.jaco.tool.ToolExecution;
 
 import java.util.List;
 
@@ -13,6 +14,33 @@ public final class HookChain {
 
     public HookChain(List<AgentHook> hooks) {
         this.hooks = List.copyOf(hooks);
+    }
+
+    public HookChain prepend(AgentHook hook) {
+        var combined = new java.util.ArrayList<AgentHook>();
+        combined.add(hook);
+        combined.addAll(hooks);
+        return new HookChain(combined);
+    }
+
+    public void onToolPrepared(ToolCall call, String preview) {
+        for (var hook : hooks) hook.onToolPrepared(call, preview);
+    }
+
+    public void onToolPermission(ToolCall call, HookVerdict verdict) {
+        for (var hook : hooks) hook.onToolPermission(call, verdict);
+    }
+
+    public void onToolCompleted(ToolCall call, ToolExecution execution) {
+        RuntimeException failure = null;
+        for (var hook : hooks) {
+            try { hook.onToolCompleted(call, execution); }
+            catch (RuntimeException e) {
+                if (failure == null) failure = e;
+                else failure.addSuppressed(e);
+            }
+        }
+        if (failure != null) throw failure;
     }
 
     public void onSessionChanged() {

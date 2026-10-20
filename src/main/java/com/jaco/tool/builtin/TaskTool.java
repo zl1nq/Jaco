@@ -13,7 +13,7 @@ import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
- * 委派子 agent 执行只读调查任务：独立线程跑一个嵌套 agent loop（独立上下文），
+ * 按预设委派子 agent：独立线程跑一个嵌套 agent loop（独立上下文），
  * 最终报告作为工具结果返回父模型。中间探索过程不占用父上下文，也不进父会话归档。
  * Handler 由 Main 在 AgentRunner 构造后绑定（registry 先于 runner 存在，晚接线）。
  */
@@ -37,8 +37,9 @@ public final class TaskTool implements Tool {
 
     @Override
     public String description() {
-        return "委派一个只读子 agent 独立调查任务（只能读文件、grep、find_files、只读 Git 查询、列目录、查归档），它返回最终结论报告。"
-                + "可用 profile 选择预设（目前仅 explore，默认 explore），tools 可进一步收窄工具范围，不能扩权。"
+        return "委派一个具有独立上下文的子 agent，返回最终报告。"
+                + "profile 默认 explore（只读调查）；edit 可读写文件，修改会展示预览并遵循宿主权限确认和审计。"
+                + "两种预设都禁止 shell、网络和递归委派；tools 可进一步收窄工具范围，不能扩权。"
                 + "适合大范围搜索、代码调研等中间输出很多的场景；子任务的过程不占用本对话上下文。";
     }
 
@@ -46,7 +47,7 @@ public final class TaskTool implements Tool {
     public JsonNode schema() {
         return JsonSchema.object()
                 .string("prompt", "给子 agent 的完整任务说明：目标、范围、报告应包含什么")
-                .string("profile", "子 agent 预设，省略时使用 explore（只读调查）",
+                .string("profile", "explore=只读调查（默认）；edit=文件修改，执行前展示预览并走权限确认",
                         Arrays.stream(SubagentProfile.values()).map(SubagentProfile::id).toArray(String[]::new))
                 .strings("tools", "可选工具子集，必须全部属于所选预设；省略使用完整预设，[] 禁止工具，重复项去重",
                         Arrays.stream(SubagentProfile.values()).flatMap(p -> p.tools().stream())

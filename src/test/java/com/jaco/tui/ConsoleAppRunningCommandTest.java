@@ -227,4 +227,23 @@ class ConsoleAppRunningCommandTest {
         input.accept(3);
         assertTrue(input.isEmpty());
     }
+
+    @Test void childPreviewAndConfirmationDisplayTaskIdentity() throws Exception {
+        try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
+            Console console = new Console();
+            AtomicBoolean approved = new AtomicBoolean();
+            console.readLine = args -> "y";
+            TestTurnEvents.emit(handle, new TurnEvent.ToolCallStart("write_file", "code.txt", "child-1"));
+            TestTurnEvents.emit(handle, new TurnEvent.ToolPreview("+new", "child-1"));
+            TestTurnEvents.emit(handle, new TurnEvent.ApprovalRequest("write_file", "写入 code.txt",
+                    answer -> approved.set(answer.equals("y")), "child-1"));
+            TestTurnEvents.emit(handle, new TurnEvent.ToolCallEnd("write_file", true, "已创建", "child-1"));
+            TestTurnEvents.emit(handle, new TurnEvent.Done(null, "stop", false, false, null, 1));
+            assertTimeoutPreemptively(Duration.ofSeconds(3), () -> assertTrue(console.app(agent).consumeTurn(handle)));
+            assertTrue(approved.get());
+            assertTrue(console.text().contains("[子任务 child-1]"));
+            assertTrue(console.text().contains("修改预览"));
+            assertTrue(console.text().contains("需要确认"));
+        }
+    }
 }

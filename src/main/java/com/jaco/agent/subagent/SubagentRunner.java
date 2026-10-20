@@ -2,6 +2,8 @@ package com.jaco.agent.subagent;
 
 import com.jaco.agent.AgentLoopSupport;
 import com.jaco.agent.ContextCompactor;
+import com.jaco.agent.TurnEvent;
+import com.jaco.agent.TurnEventSink;
 import com.jaco.config.ProviderConfig;
 import com.jaco.hook.HookChain;
 import com.jaco.llm.*;
@@ -12,10 +14,11 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import static com.jaco.agent.AgentLoopSupport.isContextOverflow;
 import static com.jaco.agent.AgentLoopSupport.unicodePrefix;
 
-/** 只读子循环；所有可变运行状态均属于本次 control 和临时 Session。 */
+/** 按固定预设执行的子循环；所有可变状态均属于本次 control 和临时 Session。 */
 public final class SubagentRunner {
     private final OpenAiCompatClient client;
     private final ProviderConfig provider;
@@ -44,12 +47,30 @@ public final class SubagentRunner {
     }
 
     public SubagentManager.Completion run(SubagentControl control) {
+        return run(control, null);
+    }
+
+    public SubagentManager.Completion run(SubagentControl control, TurnEventSink parent) {
+        try (var binding = TurnEventSink.bindSubagent(parent, control.id(), control::isStopped)) {
+            return runBound(control);
+        }
+    }
+
+    private SubagentManager.Completion runBound(SubagentControl control) {
         var spec = control.spec();
         var profile = spec.profile();
         Set<String> tools = spec.tools();
         BooleanSupplier cancelled = control::isStopped;
         var support = new AgentLoopSupport(client, provider, hooks, sessions, contextLimit, maxToolResultChars, control);
         Session child = Session.create(spec.parentSessionId() + "-sub-" + control.id(), System.currentTimeMillis());
+        HookChain toolHooks = hooks;
+        if (profile == SubagentProfile.EDIT) {
+            Path archive = sessions.archivePath(child);
+            Path auditFile = archive.resolveSibling(child.id() + ".audit.jsonl");
+            control.auditFile(auditFile);
+            toolHooks = hooks.prepend(new SubagentAuditHook(auditFile, spec, control.id()));
+        }
+        var executor = new ToolCallExecutor(registry, toolHooks);
         List<Message> messages = child.messages();
         String systemPrompt = profile.systemPrompt();
         if (!tools.equals(profile.tools())) {
@@ -101,7 +122,7 @@ public final class SubagentRunner {
                     messages.add(new Message(Role.ASSISTANT,
                             result.content().isEmpty() ? null : result.content(), calls, null, null));
                     control.phase(SubagentPhase.EXECUTING_TOOL);
-                    executeSubagentTools(calls, child, control, support, tools);
+                    executeSubagentTools(calls, child, control, support, tools, executor);
                     control.progress(partialFindings(messages));
                 } catch (IOException e) {
                     if (!overflowRetried && isContextOverflow(e)) {
@@ -147,29 +168,20 @@ public final class SubagentRunner {
 
     /** 子 agent 的工具执行：归档及 recall 严格使用本次子任务的运行状态。 */
     private void executeSubagentTools(List<ToolCall> calls, Session child, SubagentControl control,
-                                      AgentLoopSupport support, Set<String> tools) {
+                                      AgentLoopSupport support, Set<String> tools, ToolCallExecutor executor) {
         BooleanSupplier cancelled = control::isStopped;
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
                 control.processRef(), cancelled, sessions.archivePath(child), maxToolResultChars);
         for (ToolCall call : calls) {
-            String name = call.function().name() != null ? call.function().name() : "?";
-            String result;
-            if (!tools.contains(name)) {
-                result = "ERROR: 子 agent 只允许只读工具 " + tools;
-            } else {
-                try {
-                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    result = registry.execute(call, ctx);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    result = "ERROR: interrupted by user";
-                } catch (Exception e) {
-                    result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-                }
-            }
-            result = support.gateToolResult(child, result);
+            String name = call.function().name();
+            TurnEventSink sink = TurnEventSink.current();
+            Consumer<TurnEvent> events = sink != null && ("write_file".equals(name) || "edit_file".equals(name))
+                    ? sink::emit : e -> { };
+            ToolExecution execution = executor.execute(call, ctx, tools, events);
+            String result = support.gateToolResult(child, execution.result());
             child.messages().add(Message.toolResult(call.id(), result));
             control.progress(partialFindings(child.messages()));
+            executor.completed(call, execution, events);
         }
     }
 

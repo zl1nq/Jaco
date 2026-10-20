@@ -12,7 +12,8 @@ public final class SubagentHandle {
     public record Snapshot(String id, String parentSessionId, String parentTurnId, String profile, Set<String> tools,
                            SubagentState state, SubagentPhase phase, StopReason stopReason,
                            long createdAt, Long startedAt, Long exitedAt, long deadline,
-                           int iterations, long totalTokens, boolean usageAvailable, boolean cleanupOverdue) { }
+                           int iterations, long totalTokens, boolean usageAvailable, boolean cleanupOverdue,
+                           String auditFile) { }
 
     private final SubagentControl control;
     private final CompletableFuture<SubagentResult> completion = new CompletableFuture<>();

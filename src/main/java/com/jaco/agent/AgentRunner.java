@@ -10,7 +10,6 @@ import com.jaco.agent.subagent.SubagentRunner;
 import com.jaco.agent.subagent.SubagentSpec;
 import com.jaco.agent.subagent.SubagentState;
 import com.jaco.hook.HookChain;
-import com.jaco.hook.HookVerdict;
 import com.jaco.llm.ChatRequest;
 import com.jaco.llm.ChatResponse;
 import com.jaco.llm.ChatStream;
@@ -26,6 +25,7 @@ import com.jaco.memory.ProfileExtractor;
 import com.jaco.memory.ProfileContextSelector;
 import com.jaco.memory.ProfileExtractionPolicy;
 import com.jaco.tool.ToolContext;
+import com.jaco.tool.ToolCallExecutor;
 import com.jaco.tool.ToolRegistry;
 import com.jaco.tool.ToolSandbox;
 
@@ -559,7 +559,8 @@ public final class AgentRunner implements AutoCloseable {
             var child = subagents.find(id);
             if (child == null || !child.snapshot().parentSessionId().equals(owner)) return "没有匹配的子任务";
             String identity = child.id() + " [" + child.snapshot().profile() + "] / tools="
-                    + child.snapshot().tools().stream().sorted().toList();
+                    + child.snapshot().tools().stream().sorted().toList()
+                    + (child.snapshot().auditFile() == null ? "" : "\n审计日志: " + child.snapshot().auditFile());
             var result = child.result();
             return result == null ? identity + " " + child.snapshot().state()
                     : identity + " " + result.exitReason() + " / " + result.stats().elapsedMillis() + "ms / "
@@ -594,7 +595,7 @@ public final class AgentRunner implements AutoCloseable {
         TurnEventSink sink = TurnEventSink.current();
         SubagentHandle child;
         try {
-            child = subagents.start(spec, stopped, subagentRunner::run);
+            child = subagents.start(spec, stopped, control -> subagentRunner.run(control, sink));
         } catch (IllegalStateException e) {
             return "子任务失败: " + e.getMessage();
         }
@@ -653,58 +654,17 @@ public final class AgentRunner implements AutoCloseable {
     private void executeTools(List<ToolCall> calls, TurnHandle handle, Session owner) {
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
                 handle.processRef(), handle::isCancelled, sessions.archivePath(owner), maxToolResultChars);
+        var executor = new ToolCallExecutor(registry, hooks);
         for (ToolCall call : calls) {
-            String name = call.function().name() != null ? call.function().name() : "?";
-            String summary = registry.summaryOf(call);
-            handle.emit(new TurnEvent.ToolCallStart(name, summary));
-
-            String result;
-            boolean ok = true;
-            try {
-                if (handle.isCancelled()) {
-                    throw new InterruptedException("interrupted by user");
-                }
-                var prepared = registry.prepare(call, ctx);
-                if (prepared.preview() != null) {
-                    handle.emit(new TurnEvent.ToolPreview(prepared.preview()));
-                }
-                HookVerdict verdict = hooks.onBeforeToolCall(call);
-                if (!verdict.proceed()) {
-                    result = "Permission denied: " + verdict.denyReason();
-                    ok = false;
-                } else if (handle.isCancelled()) {
-                    result = "ERROR: interrupted by user";
-                    ok = false;
-                } else {
-                    result = prepared.execute();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                result = "ERROR: interrupted by user";
-                ok = false;
-            } catch (Exception e) {
-                result = "ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-                ok = false;
-            }
-            result = support.gateToolResult(owner, result);
+            var execution = executor.execute(call, ctx, null, handle::emit);
+            String result = support.gateToolResult(owner, execution.result());
             owner.messages().add(Message.toolResult(call.id(), result));
-            hooks.onAfterToolCall(call, result);
-            handle.emit(new TurnEvent.ToolCallEnd(name, ok, summarizeResult(result)));
+            executor.completed(call, execution, handle::emit);
         }
     }
 
     static String clipMiddle(String text, int budget) {
         return AgentLoopSupport.clipMiddle(text, budget);
-    }
-
-    private String summarizeResult(String result) {
-        if (result == null) {
-            return "";
-        }
-        String firstLine = result.lines().findFirst().orElse("");
-        long lineCount = result.lines().count();
-        String s = firstLine.length() > 100 ? firstLine.substring(0, 100) + "…" : firstLine;
-        return lineCount > 1 ? s + " …(" + lineCount + " 行)" : s;
     }
 
     private List<Message> buildMessages(Session owner) {
@@ -748,6 +708,8 @@ public final class AgentRunner implements AutoCloseable {
                   用户明确要求记住或忘记时可简短确认需求，不宣称尚未实际完成的保存、删除；完整记录可用 /memory 查看。
 
                 # 工具使用守则
+                - 委派调查用 task 的 explore 预设（默认）；明确委派文件修改可选择 edit，tools 只能进一步收窄预设工具
+                - edit 子任务会展示修改预览并遵循宿主权限确认，启动 task 的授权不等于文件写入授权；子任务不能执行命令，测试由主任务按授权完成
                 - 按文件名或路径定位文件用 find_files，搜索文件内容用 grep，查看单层目录用 list_dir
                 - 查看仓库状态用 git_status，查看未暂存或已暂存差异用 git_diff；paths 是相对仓库根的字面路径
                 - 读取公共网页用 web_fetch，后续用 fetch_id 和 next_offset 分页；不执行 JavaScript，动态网页可能没有完整内容

@@ -41,6 +41,9 @@ public final class SubagentControl {
     private int iterations;
     private long promptTokens, completionTokens, totalTokens;
     private boolean usageAvailable;
+    private String auditFile;
+
+    public synchronized void auditFile(java.nio.file.Path path) { auditFile = path.toString(); }
 
     SubagentControl(SubagentSpec spec, java.util.function.BooleanSupplier parentCancelled) {
         this.spec = spec;
@@ -216,7 +219,7 @@ public final class SubagentControl {
     public synchronized SubagentHandle.Snapshot snapshot() {
         return new SubagentHandle.Snapshot(id, parentSessionId, parentTurnId, profile.id(), tools, state, phase,
                 stopReason, createdAt, startedAt, exitedAt, deadline,
-                iterations, totalTokens, usageAvailable, cleanupOverdue);
+                iterations, totalTokens, usageAvailable, cleanupOverdue, auditFile);
     }
 
     static String limit(String text, int length) {
