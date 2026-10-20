@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -82,6 +83,44 @@ class AgentRunnerSubagentLifecycleTest {
             assertEquals(SubagentState.EXITED, snapshot.state());
             assertEquals(StopReason.TIMEOUT, snapshot.stopReason());
             assertTrue(agent.subagentCommand(snapshot.id()).contains("TIMED_OUT"));
+        }
+    }
+
+    @Test void parentTaskSelectionReachesChildAndExplicitEmptyToolsRemainEmpty() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        List<ChatRequest> requests = new ArrayList<>();
+        try (var agent = runner(request -> {
+            requests.add(request);
+            return switch (calls.getAndIncrement()) {
+                case 0 -> TestStreams.of(new StreamChunk.ToolCallDelta(0, "task1", "task",
+                        "{\"prompt\":\"只根据说明回答\",\"profile\":\"explore\",\"tools\":[]}"),
+                        new StreamChunk.Done("tool_calls", null));
+                case 1 -> read("denied", null);
+                case 2 -> TestStreams.of(new StreamChunk.Delta("子报告"), new StreamChunk.Done("stop", null));
+                default -> TestStreams.of(new StreamChunk.Delta("父报告"), new StreamChunk.Done("stop", null));
+            };
+        }, "不应读取的内容", 100_000)) {
+            try (TurnHandle handle = agent.runTurn("委派无工具调查")) {
+                assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+                    while (!(handle.poll(100) instanceof TurnEvent.Done)) { }
+                });
+            }
+            assertEquals(4, requests.size());
+            var taskSchema = requests.getFirst().tools().stream().filter(t -> t.function().name().equals("task"))
+                    .findFirst().orElseThrow().function().parameters();
+            assertEquals("[\"explore\"]", taskSchema.path("properties").path("profile").path("enum").toString());
+            assertTrue(taskSchema.path("properties").has("tools"));
+            assertNull(requests.get(1).tools());
+            assertTrue(requests.get(1).messages().getFirst().content().contains("无，只根据任务说明回答"));
+            var rejected = requests.get(2).messages().stream().filter(m -> m.role() == Role.TOOL).toList();
+            assertEquals(1, rejected.size());
+            assertEquals("denied", rejected.getFirst().toolCallId());
+            assertTrue(rejected.getFirst().content().startsWith("ERROR: 子 agent 只允许只读工具"));
+            assertFalse(rejected.getFirst().content().contains("不应读取的内容"));
+            var snapshot = agent.subagentSnapshots().getFirst();
+            assertTrue(snapshot.tools().isEmpty());
+            assertEquals("explore", snapshot.profile());
+            assertTrue(agent.session().messages().stream().anyMatch(m -> m.role() == Role.TOOL && m.content().equals("子报告")));
         }
     }
 

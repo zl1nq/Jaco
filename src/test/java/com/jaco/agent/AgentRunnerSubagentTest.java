@@ -2,6 +2,7 @@ package com.jaco.agent;
 
 import com.jaco.config.ProviderConfig;
 import com.jaco.agent.subagent.SubagentProfile;
+import com.jaco.agent.subagent.SubagentRequest;
 import com.jaco.hook.HookChain;
 import com.jaco.llm.ChatRequest;
 import com.jaco.llm.ChatStream;
@@ -36,6 +37,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class AgentRunnerSubagentTest {
 
@@ -157,6 +159,31 @@ class AgentRunnerSubagentTest {
         for (int i = 0; i < results.size(); i++) {
             assertEquals("denied" + i, results.get(i).toolCallId());
             assertTrue(results.get(i).content().startsWith("ERROR: 子 agent 只允许只读工具"));
+        }
+    }
+
+    @Test
+    void toolSubsetRestrictsDefinitionsAndDeniesExcludedButRegisteredTools() throws Exception {
+        java.nio.file.Files.writeString(tmp.resolve("x"), "ORIGINAL_CONTENT");
+        FakeClient client = new FakeClient(List.of(TestStreams.of(
+                new StreamChunk.ToolCallDelta(0, "allowed", "read_file", "{\"path\":\"x\"}"),
+                new StreamChunk.ToolCallDelta(1, "excluded", "grep", "{\"pattern\":\"ORIGINAL_CONTENT\"}"),
+                new StreamChunk.Done("tool_calls", null)), TestStreams.of(
+                new StreamChunk.Delta("报告"), new StreamChunk.Done("stop", null))));
+        try (var agent = runner(client)) {
+            var selected = new java.util.HashSet<>(Set.of("read_file"));
+            var request = new SubagentRequest("调查", SubagentProfile.EXPLORE, selected);
+            selected.add("grep"); // 调用者后续修改不能扩大已创建请求的工具范围。
+            assertEquals("报告", agent.runSubagent(request, () -> false));
+            assertEquals(List.of("read_file"), client.requests.getFirst().tools().stream()
+                    .map(t -> t.function().name()).toList());
+            var results = client.requests.get(1).messages().stream().filter(m -> m.role() == Role.TOOL).toList();
+            assertTrue(results.get(0).content().contains("ORIGINAL_CONTENT"));
+            assertTrue(results.get(1).content().startsWith("ERROR: 子 agent 只允许只读工具"));
+            assertFalse(results.get(1).content().contains("ORIGINAL_CONTENT"));
+            var snapshot = agent.subagentSnapshots().getFirst();
+            assertEquals(Set.of("read_file"), snapshot.tools());
+            assertTrue(agent.subagentCommand(snapshot.id()).contains("tools=[read_file]"));
         }
     }
 

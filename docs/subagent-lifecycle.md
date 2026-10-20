@@ -1,13 +1,14 @@
 # 子任务生命周期
 
-子 agent 是同一 JVM 中的逻辑进程，独立上下文和归档，共享只读工具与工作区。第一阶段保留同步 `task(prompt)` 协议，一个应用实例只接收一个活动子任务，暂不支持排队等待、并行、递归委派、挂起恢复或跨父轮后台运行。
+子 agent 是同一 JVM 中的逻辑进程，独立上下文和归档，共享只读工具与工作区。保留同步 `task` 协议，`prompt` 必填，支持可选的 `profile` 和 `tools`；一个应用实例只接收一个活动子任务，暂不支持排队等待、并行、递归委派、挂起恢复或跨父轮后台运行。
 
 ## 组成
 
 | 类型 | 职责 |
 | --- | --- |
 | `SubagentProfile` | 内置不可变预设，集中定义标识、系统提示和工具白名单；当前仅 `EXPLORE` |
-| `SubagentSpec` | 固定父会话、父轮 ID、任务说明、预设、总超时和迭代预算 |
+| `SubagentRequest` | 工具层到运行时的不可变请求，验证任务说明、预设和工具子集 |
+| `SubagentSpec` | 固定父会话、父轮 ID、任务说明、预设、实际工具集、总超时和迭代预算 |
 | `SubagentManager` | 注册、准入、监督执行、按父归属取消、关闭和记录淘汰 |
 | `SubagentHandle` | 暴露只读快照、停止请求及等待结果，不暴露可修改 Future |
 | `SubagentControl` | 同步状态变更、裁定完成竞争、登记资源和统计 |
@@ -17,7 +18,11 @@
 
 `TurnHandle.id()` 是父轮标识。正常入口在父线程固定会话和轮次信息；直接调用 `runSubagent` 的嵌入场景分配临时轮次 ID，以传入的取消信号建立作用域。模型、工具沙箱等不可变执行依赖由 runner 持有，运行中不读取父会话字段。
 
-现有只读调查能力迁入 `SubagentProfile.EXPLORE`，对外标识为 `explore`。预设在 `SubagentSpec` 创建时固定，既用于模型请求的工具定义，也用于每次工具调用的执行白名单检查。原有五参数 `SubagentSpec` 构造入口保留并默认选择 `EXPLORE`；`task(prompt)` 和 `runSubagent` 接口不变，当前不接收外部预设名或工具子集。控制块在释放原始任务说明后仍保留预设标识，供 `/subagents` 查询已退出记录。
+现有只读调查能力位于 `SubagentProfile.EXPLORE`，对外标识为 `explore`。`task` 接收必填 `prompt` 以及可选 `profile`、`tools`。省略预设时使用 `explore`，省略工具子集时使用预设完整工具集，空数组表示禁止工具；未知预设、非法类型或任何越界工具均整体拒绝，不默默过滤或回退。当前仍仅内置 `explore`，未新增其他角色或自定义预设。
+
+`TaskTool.Handler` 接收已验证的 `SubagentRequest`，传入 `AgentRunner.runSubagent(SubagentRequest, cancelled)`；原有 `runSubagent(String, cancelled)`、五参数和六参数 `SubagentSpec` 构造入口保留，默认行为不变。预设及实际工具集在请求与 Spec 边界都校验并复制为不可变集合，调用者修改原集合无法扩权。运行时使用实际集合生成模型工具定义及执行白名单；集合为空时不发送工具定义，并明确告知模型不得调用工具。
+
+控制块在释放原始任务说明后仍保留预设标识和实际工具集，供 `/subagents` 查询运行中及已退出记录。列表展示工具数，详情展示排序后的工具名称，工具调用摘要展示选择范围，后续取消、超时和归档行为与预设选择解耦。
 
 ## 状态和退出原因
 

@@ -1,6 +1,7 @@
 package com.jaco.agent.subagent;
 
 import java.time.Duration;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -8,7 +9,7 @@ import java.util.concurrent.TimeoutException;
 
 /** 等待超时只结束本次等待，不改变任务状态；不暴露可修改的完成 Future。 */
 public final class SubagentHandle {
-    public record Snapshot(String id, String parentSessionId, String parentTurnId, String profile,
+    public record Snapshot(String id, String parentSessionId, String parentTurnId, String profile, Set<String> tools,
                            SubagentState state, SubagentPhase phase, StopReason stopReason,
                            long createdAt, Long startedAt, Long exitedAt, long deadline,
                            int iterations, long totalTokens, boolean usageAvailable, boolean cleanupOverdue) { }

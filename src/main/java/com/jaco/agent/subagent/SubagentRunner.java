@@ -10,6 +10,7 @@ import com.jaco.tool.*;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import static com.jaco.agent.AgentLoopSupport.isContextOverflow;
 import static com.jaco.agent.AgentLoopSupport.unicodePrefix;
@@ -45,13 +46,19 @@ public final class SubagentRunner {
     public SubagentManager.Completion run(SubagentControl control) {
         var spec = control.spec();
         var profile = spec.profile();
+        Set<String> tools = spec.tools();
         BooleanSupplier cancelled = control::isStopped;
         var support = new AgentLoopSupport(client, provider, hooks, sessions, contextLimit, maxToolResultChars, control);
         Session child = Session.create(spec.parentSessionId() + "-sub-" + control.id(), System.currentTimeMillis());
         List<Message> messages = child.messages();
-        messages.add(Message.system(profile.systemPrompt()));
+        String systemPrompt = profile.systemPrompt();
+        if (!tools.equals(profile.tools())) {
+            systemPrompt += "\n本次运行可用工具: " + (tools.isEmpty() ? "无，只根据任务说明回答，不调用工具"
+                    : tools.stream().sorted().toList()) + "。不得调用其他工具。";
+        }
+        messages.add(Message.system(systemPrompt));
         messages.add(Message.user(spec.prompt()));
-        List<ToolDefinition> defs = registry.definitions(profile.tools());
+        List<ToolDefinition> defs = registry.definitions(tools);
         ContextCompactor compactor = new ContextCompactor(sessions, child, contextLimit);
         long promptTokens = 0;
         boolean overflowRetried = false;
@@ -65,7 +72,7 @@ public final class SubagentRunner {
                     if (outcome.compacted()) promptTokens = outcome.tokensAfter();
                     if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) return SubagentManager.Completion.failed("子任务被中断");
                     ChatRequest request = new ChatRequest(provider.model(), List.copyOf(messages), provider.temperature(),
-                            true, new ChatRequest.StreamOptions(true), defs);
+                            true, new ChatRequest.StreamOptions(true), defs.isEmpty() ? null : defs);
                     control.phase(SubagentPhase.REQUESTING_MODEL);
                     hooks.onBeforeRequest(request);
                     stream = client.chatStream(request);
@@ -94,7 +101,7 @@ public final class SubagentRunner {
                     messages.add(new Message(Role.ASSISTANT,
                             result.content().isEmpty() ? null : result.content(), calls, null, null));
                     control.phase(SubagentPhase.EXECUTING_TOOL);
-                    executeSubagentTools(calls, child, control, support, profile);
+                    executeSubagentTools(calls, child, control, support, tools);
                     control.progress(partialFindings(messages));
                 } catch (IOException e) {
                     if (!overflowRetried && isContextOverflow(e)) {
@@ -140,15 +147,15 @@ public final class SubagentRunner {
 
     /** 子 agent 的工具执行：归档及 recall 严格使用本次子任务的运行状态。 */
     private void executeSubagentTools(List<ToolCall> calls, Session child, SubagentControl control,
-                                      AgentLoopSupport support, SubagentProfile profile) {
+                                      AgentLoopSupport support, Set<String> tools) {
         BooleanSupplier cancelled = control::isStopped;
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
                 control.processRef(), cancelled, sessions.archivePath(child), maxToolResultChars);
         for (ToolCall call : calls) {
             String name = call.function().name() != null ? call.function().name() : "?";
             String result;
-            if (!profile.tools().contains(name)) {
-                result = "ERROR: 子 agent 只允许只读工具 " + profile.tools();
+            if (!tools.contains(name)) {
+                result = "ERROR: 子 agent 只允许只读工具 " + tools;
             } else {
                 try {
                     if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new InterruptedException();

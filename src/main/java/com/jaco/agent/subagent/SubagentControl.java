@@ -5,6 +5,7 @@ import com.jaco.llm.Usage;
 import com.jaco.tool.ProcessTree;
 
 import java.util.UUID;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** 内部控制块。所有状态和完成竞争在同一监视器下裁定；资源关闭在锁外执行。 */
@@ -15,6 +16,7 @@ public final class SubagentControl {
     private final String parentSessionId;
     private final String parentTurnId;
     private final SubagentProfile profile;
+    private final Set<String> tools;
     private final long timeoutNanos;
     private final long deadline;
     private java.util.function.BooleanSupplier parentCancelled;
@@ -45,6 +47,7 @@ public final class SubagentControl {
         this.parentSessionId = spec.parentSessionId();
         this.parentTurnId = spec.parentTurnId();
         this.profile = spec.profile();
+        this.tools = spec.tools();
         this.timeoutNanos = spec.timeout().toNanos();
         this.deadline = createdAt + spec.timeout().toMillis();
         this.parentCancelled = parentCancelled;
@@ -211,7 +214,7 @@ public final class SubagentControl {
     }
 
     public synchronized SubagentHandle.Snapshot snapshot() {
-        return new SubagentHandle.Snapshot(id, parentSessionId, parentTurnId, profile.id(), state, phase,
+        return new SubagentHandle.Snapshot(id, parentSessionId, parentTurnId, profile.id(), tools, state, phase,
                 stopReason, createdAt, startedAt, exitedAt, deadline,
                 iterations, totalTokens, usageAvailable, cleanupOverdue);
     }

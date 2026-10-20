@@ -1,6 +1,7 @@
 package com.jaco.agent.subagent;
 
 import java.util.Set;
+import java.util.TreeSet;
 
 /** 内置、不可变的子 agent 预设；工具定义与执行白名单共用同一工具集。 */
 public enum SubagentProfile {
@@ -23,4 +24,21 @@ public enum SubagentProfile {
     public String id() { return id; }
     public String systemPrompt() { return systemPrompt; }
     public Set<String> tools() { return tools; }
+
+    public static SubagentProfile fromId(String id) {
+        for (var profile : values()) {
+            if (profile.id.equals(id)) return profile;
+        }
+        throw new IllegalArgumentException("未知子 agent 预设: " + id);
+    }
+
+    /** 省略时使用完整预设；显式空集表示禁止工具。越界请求整体拒绝。 */
+    public Set<String> selectTools(Set<String> requested) {
+        if (requested == null) return tools;
+        Set<String> selected = Set.copyOf(requested);
+        var denied = new TreeSet<>(selected);
+        denied.removeAll(tools);
+        if (!denied.isEmpty()) throw new IllegalArgumentException("预设 " + id + " 不允许工具: " + denied);
+        return selected;
+    }
 }

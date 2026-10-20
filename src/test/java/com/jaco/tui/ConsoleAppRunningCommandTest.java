@@ -103,7 +103,8 @@ class ConsoleAppRunningCommandTest {
         AtomicReference<Thread> parentThread = new AtomicReference<>();
         var client = new OpenAiCompatClient("http://localhost", "k") {
             @Override public ChatStream chatStream(ChatRequest request) {
-                if (request.tools().stream().anyMatch(t -> t.function().name().equals("task"))) {
+                // 测试注册表只有 task，子任务没有可用工具时请求省略 tools 字段。
+                if (request.tools() != null && request.tools().stream().anyMatch(t -> t.function().name().equals("task"))) {
                     parentThread.set(Thread.currentThread());
                     return TestStreams.of(new StreamChunk.ToolCallDelta(0, "t1", "task", "{\"prompt\":\"调查\"}"),
                             new StreamChunk.Done("tool_calls", null));
