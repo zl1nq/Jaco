@@ -86,6 +86,100 @@ class AgentRunnerSubagentLifecycleTest {
         }
     }
 
+    @Test void backgroundSurvivesParentCompletionAndCancellationAndNotifiesExactlyOnce() throws Exception {
+        CountDownLatch childStarted = new CountDownLatch(1);
+        CountDownLatch finishChild = new CountDownLatch(1);
+        AtomicInteger parentRequests = new AtomicInteger();
+        try (var agent = runner(request -> {
+            boolean parent = request.tools() != null && request.tools().stream()
+                    .anyMatch(t -> t.function().name().equals("task"));
+            if (parent) return parentRequests.getAndIncrement() == 0
+                    ? TestStreams.of(new StreamChunk.ToolCallDelta(0, "bg", "task",
+                        "{\"prompt\":\"后台调查\",\"run_in_background\":true,\"tools\":[]}"),
+                        new StreamChunk.Done("tool_calls", null))
+                    : TestStreams.of(new StreamChunk.Delta("父任务完成"), new StreamChunk.Done("stop", null));
+            assertNull(request.tools());
+            childStarted.countDown();
+            awaitIgnoringInterrupts(finishChild);
+            return TestStreams.of(new StreamChunk.Delta("后台独立报告"), new StreamChunk.Done("stop", null));
+        }, "", 100_000)) {
+            try {
+                try (var turn = agent.runTurn("启动后台调查后继续")) {
+                    assertTimeoutPreemptively(Duration.ofSeconds(3), () -> {
+                        while (!(turn.poll(100) instanceof TurnEvent.Done)) { }
+                    });
+                    assertTrue(childStarted.await(3, TimeUnit.SECONDS));
+                    assertTrue(agent.session().messages().stream().anyMatch(m -> m.role() == Role.TOOL
+                            && m.toolCallId().equals("bg") && m.content().startsWith("后台子任务已启动:")));
+                } // close() 取消原父轮，后台仍继续。
+                var child = agent.subagentSnapshots().getFirst();
+                assertTrue(child.runInBackground());
+                assertEquals(SubagentState.RUNNING, child.state());
+                assertTrue(agent.subagentCommand(child.id()).contains("[后台]"));
+                assertTrue(agent.runSubagent("第二个调查", () -> false).contains("已有活动子任务"));
+                assertNull(agent.pollSubagentNotice());
+                finishChild.countDown();
+                eventually(() -> agent.subagentSnapshots().getFirst().state() == SubagentState.EXITED);
+                AtomicReference<String> notice = new AtomicReference<>();
+                eventually(() -> { notice.set(agent.pollSubagentNotice()); return notice.get() != null; });
+                assertTrue(notice.get().contains(child.id()));
+                assertTrue(notice.get().contains("SUCCEEDED"));
+                assertNull(agent.pollSubagentNotice());
+                assertTrue(agent.subagentCommand(child.id()).contains("后台独立报告"));
+                assertEquals(1, agent.session().messages().stream().filter(m -> m.role() == Role.TOOL
+                        && m.toolCallId().equals("bg")).count());
+                assertFalse(agent.session().messages().stream().anyMatch(m -> m.content() != null
+                        && m.content().contains("后台独立报告")));
+                assertEquals(2, parentRequests.get());
+            } finally { finishChild.countDown(); }
+        }
+    }
+
+    @Test void backgroundCancelAndTimeoutProduceQueryableResultsAndNotifications() throws Exception {
+        try (var agent = runner(request -> TestStreams.of(), "", 100_000)) {
+            var request = new SubagentRequest("后台调查", SubagentProfile.EXPLORE, null, true);
+            assertTrue(agent.runSubagent(request, () -> true).contains("未启动"));
+            assertTrue(agent.subagentSnapshots().isEmpty());
+            agent.runSubagent(request, () -> false);
+            String id = agent.subagentSnapshots().getFirst().id();
+            assertTrue(agent.subagentCommand("cancel " + id).contains("已请求取消"));
+            eventually(() -> agent.subagentCommand(id).contains("CANCELLED"));
+            eventually(() -> agent.pollSubagentNotice() != null);
+            assertTrue(agent.cancelSubagent(id).contains("已退出"));
+            agent.configureSubagentTimeout(Duration.ofMillis(100));
+            agent.runSubagent(request, () -> false);
+            String timedId = agent.subagentSnapshots().getLast().id();
+            eventually(() -> agent.subagentCommand(timedId).contains("TIMED_OUT"));
+            eventually(() -> agent.pollSubagentNotice() != null);
+        }
+    }
+
+    @Test void sessionChangeCancelsBackgroundWithoutDeliveringOldSessionNotice() throws Exception {
+        var stream = TestStreams.of();
+        try (var agent = runner(request -> stream, "", 100_000)) {
+            agent.runSubagent(new SubagentRequest("后台调查", SubagentProfile.EXPLORE, null, true), () -> false);
+            var child = agent.subagentSnapshots().getFirst();
+            agent.newSession();
+            eventually(() -> agent.subagentSnapshots().getFirst().state() == SubagentState.EXITED);
+            assertEquals(StopReason.SESSION_CHANGED, agent.subagentSnapshots().getFirst().stopReason());
+            assertEquals("没有匹配的子任务", agent.subagentCommand(child.id()));
+            assertEquals("没有匹配的子任务", agent.cancelSubagent(child.id()));
+            assertNull(agent.pollSubagentNotice());
+        }
+    }
+
+    @Test void backgroundFailureIsNotifiedAndQueryable() throws Exception {
+        try (var agent = runner(request -> { throw new IOException("后台请求失败"); }, "", 100_000)) {
+            agent.runSubagent(new SubagentRequest("调查", SubagentProfile.EXPLORE, null, true), () -> false);
+            var child = agent.subagentSnapshots().getFirst();
+            eventually(() -> agent.subagentCommand(child.id()).contains("FAILED"));
+            AtomicReference<String> notice = new AtomicReference<>();
+            eventually(() -> { notice.set(agent.pollSubagentNotice()); return notice.get() != null; });
+            assertTrue(notice.get().contains("FAILED"));
+            assertTrue(agent.subagentCommand(child.id()).contains("后台请求失败"));
+        }
+    }
+
     @Test void parentTaskSelectionReachesChildAndExplicitEmptyToolsRemainEmpty() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         List<ChatRequest> requests = new ArrayList<>();

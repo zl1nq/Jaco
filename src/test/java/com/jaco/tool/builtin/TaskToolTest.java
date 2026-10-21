@@ -105,6 +105,27 @@ class TaskToolTest {
     }
 
     @Test
+    void backgroundFlagIsOptionalStrictBooleanAndExploreOnly() throws Exception {
+        TaskTool tool = new TaskTool();
+        AtomicReference<SubagentRequest> received = new AtomicReference<>();
+        tool.bind((request, cancelled) -> { received.set(request); return "回执"; });
+        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\"}"), ctx());
+        assertTrue(!received.get().runInBackground());
+        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\",\"run_in_background\":true,\"tools\":[]}"), ctx());
+        assertTrue(received.get().runInBackground());
+        assertTrue(received.get().tools().isEmpty());
+        tool.execute(MAPPER.readTree("{\"prompt\":\"修改\",\"profile\":\"edit\",\"run_in_background\":false}"), ctx());
+        assertEquals(SubagentProfile.EDIT, received.get().profile());
+        for (String invalid : List.of("null", "1", "\"true\"", "[]", "{}")) {
+            assertTrue(tool.execute(MAPPER.readTree("{\"prompt\":\"调查\",\"run_in_background\":" + invalid + "}"), ctx())
+                    .startsWith("ERROR:"));
+        }
+        assertTrue(tool.execute(MAPPER.readTree("{\"prompt\":\"修改\",\"profile\":\"edit\",\"run_in_background\":true}"), ctx())
+                .contains("仅支持 explore"));
+        assertEquals("boolean", tool.schema().path("properties").path("run_in_background").path("type").asText());
+    }
+
+    @Test
     void blankPromptRejected() throws Exception {
         TaskTool tool = new TaskTool();
         tool.bind((prompt, cancelled) -> "不应被调用");

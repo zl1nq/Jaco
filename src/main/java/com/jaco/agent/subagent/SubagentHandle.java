@@ -13,7 +13,7 @@ public final class SubagentHandle {
                            SubagentState state, SubagentPhase phase, StopReason stopReason,
                            long createdAt, Long startedAt, Long exitedAt, long deadline,
                            int iterations, long totalTokens, boolean usageAvailable, boolean cleanupOverdue,
-                           String auditFile) { }
+                           String auditFile, boolean runInBackground) { }
 
     private final SubagentControl control;
     private final CompletableFuture<SubagentResult> completion = new CompletableFuture<>();
@@ -42,6 +42,10 @@ public final class SubagentHandle {
     }
 
     public SubagentResult result() { return completion.getNow(null); }
+
+    public void onComplete(java.util.function.Consumer<SubagentResult> listener) {
+        completion.thenAccept(listener);
+    }
 
     void publish(SubagentResult result) { completion.complete(result); }
 }

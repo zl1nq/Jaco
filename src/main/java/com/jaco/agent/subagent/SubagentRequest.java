@@ -4,7 +4,10 @@ import java.util.Objects;
 import java.util.Set;
 
 /** 工具层到运行时的不可变请求；在启动线程前完成预设及工具范围验证。 */
-public record SubagentRequest(String prompt, SubagentProfile profile, Set<String> tools) {
+public record SubagentRequest(String prompt, SubagentProfile profile, Set<String> tools, boolean runInBackground) {
+    public SubagentRequest(String prompt, SubagentProfile profile, Set<String> tools) {
+        this(prompt, profile, tools, false);
+    }
     public SubagentRequest(String prompt) {
         this(prompt, SubagentProfile.EXPLORE, null);
     }
@@ -15,5 +18,8 @@ public record SubagentRequest(String prompt, SubagentProfile profile, Set<String
         prompt = prompt.strip();
         if (prompt.isEmpty()) throw new IllegalArgumentException("prompt 为空");
         tools = profile.selectTools(tools);
+        if (runInBackground && profile != SubagentProfile.EXPLORE) {
+            throw new IllegalArgumentException("run_in_background 目前仅支持 explore 预设");
+        }
     }
 }

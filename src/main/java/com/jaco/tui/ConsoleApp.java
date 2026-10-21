@@ -40,6 +40,8 @@ public final class ConsoleApp {
     private final LineReader reader;
     private final Map<String, Command> commands = new LinkedHashMap<>();
     private String nextInput = "";
+    private final Object noticeLock = new Object();
+    private boolean readingInput;
 
     public ConsoleApp(AgentRunner agent) throws IOException {
         this(agent, TerminalBuilder.builder().system(true).build(), null);
@@ -72,7 +74,7 @@ public final class ConsoleApp {
             printSessions();
             return true;
         }));
-        commands.put("subagents", new Command.Simple("subagents", "子任务状态和结果：/subagents [完整任务ID]", args -> {
+        commands.put("subagents", new Command.Simple("subagents", "子任务状态和结果：/subagents [完整任务ID]；取消：/subagents cancel <ID>", args -> {
             println(agent.subagentCommand(args));
             return true;
         }));
@@ -143,6 +145,27 @@ public final class ConsoleApp {
     }
 
     public void run() {
+        Thread notifier = Thread.ofVirtual().name("jaco-subagent-notices").start(() -> {
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    synchronized (noticeLock) {
+                        if (readingInput) {
+                            String notice;
+                            while ((notice = agent.pollSubagentNotice()) != null) reader.printAbove(notice);
+                        }
+                    }
+                    Thread.sleep(100);
+                }
+            } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        });
+        try { runLoop(); }
+        finally {
+            synchronized (noticeLock) { readingInput = false; }
+            notifier.interrupt();
+        }
+    }
+
+    private void runLoop() {
         banner();
         while (true) {
             String line;
@@ -150,8 +173,13 @@ public final class ConsoleApp {
                 printInputFrameTop();
                 String initial = nextInput;
                 nextInput = "";
-                line = reader.readLine(ANSI_DIM + "│ " + ANSI_RESET
-                        + ANSI_GREEN + BOLD + "❯ " + ANSI_RESET, null, initial);
+                synchronized (noticeLock) { readingInput = true; }
+                try {
+                    line = reader.readLine(ANSI_DIM + "│ " + ANSI_RESET
+                            + ANSI_GREEN + BOLD + "❯ " + ANSI_RESET, null, initial);
+                } finally {
+                    synchronized (noticeLock) { readingInput = false; }
+                }
                 // 管道输入的 dumb 终端不会回显输入或换行，补齐后再画底线。
                 if (terminal.getType() != null && terminal.getType().startsWith("dumb")) {
                     println(line);
@@ -289,7 +317,10 @@ public final class ConsoleApp {
                 }
                 if (handle.isCancelled()) deferredApproval = null;
                 TurnEvent event;
-                if (deferredApproval != null && input.isEmpty()) {
+                String notice = agent.pollSubagentNotice();
+                if (notice != null) {
+                    event = new TurnEvent.Notice(notice);
+                } else if (deferredApproval != null && input.isEmpty()) {
                     event = deferredApproval;
                     deferredApproval = null;
                 } else {

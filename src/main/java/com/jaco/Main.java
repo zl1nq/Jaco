@@ -26,6 +26,8 @@ import com.jaco.tool.builtin.ReadFileTool;
 import com.jaco.tool.builtin.RecallTool;
 import com.jaco.tool.builtin.RunCommandTool;
 import com.jaco.tool.builtin.WriteFileTool;
+import com.jaco.tool.builtin.TaskStatusTool;
+import com.jaco.tool.builtin.TaskCancelTool;
 import com.jaco.tui.ConsoleApp;
 
 import java.io.IOException;
@@ -115,6 +117,8 @@ public final class Main {
         agent.configureSubagentLimits(java.time.Duration.ofSeconds(config.effectiveSubagentTimeoutSeconds()),
                 config.effectiveSubagentMaxIterations());
         taskTool.bind(agent::runSubagent);
+        registry.register(new TaskStatusTool(agent::subagentCommand));
+        registry.register(new TaskCancelTool(agent::cancelSubagent));
 
         Thread shutdown = new Thread(() -> {
             agent.close();

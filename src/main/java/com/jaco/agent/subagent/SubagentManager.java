@@ -104,7 +104,7 @@ public final class SubagentManager implements AutoCloseable {
     public synchronized SubagentHandle find(String id) { return handles.get(id); }
 
     public void cancelTurn(String turnId, StopReason reason) {
-        cancelMatching(c -> c.spec().parentTurnId().equals(turnId), reason);
+        cancelMatching(c -> !c.spec().runInBackground() && c.spec().parentTurnId().equals(turnId), reason);
     }
 
     public void cancelSession(String sessionId) {

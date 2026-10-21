@@ -76,6 +76,9 @@ public final class AgentRunner implements AutoCloseable {
     private final AgentLoopSupport support;
     private final SubagentRunner subagentRunner;
     private final SubagentManager subagents = new SubagentManager();
+    private record BackgroundNotice(String sessionId, String message) { }
+    private final java.util.concurrent.ArrayBlockingQueue<BackgroundNotice> backgroundNotices =
+            new java.util.concurrent.ArrayBlockingQueue<>(32);
     private Duration subagentTimeout = Duration.ofMinutes(5);
     private int subagentMaxIterations;
     private final ThreadLocal<TurnHandle> currentTurn = new ThreadLocal<>();
@@ -551,14 +554,33 @@ public final class AgentRunner implements AutoCloseable {
 
     public List<SubagentHandle.Snapshot> subagentSnapshots() { return subagents.snapshots(); }
 
-    /** 交互命令只读取当前会话的结果；不会把历史报告注入模型上下文。 */
+    /** 会话独立的完成通知，不向已结束轮次追加事件或 tool result。 */
+    public String pollSubagentNotice() {
+        BackgroundNotice notice;
+        while ((notice = backgroundNotices.poll()) != null) {
+            if (notice.sessionId().equals(session.id())) return notice.message();
+        }
+        return null;
+    }
+
+    public String cancelSubagent(String id) {
+        var child = subagents.find(id.strip());
+        if (child == null || !child.snapshot().parentSessionId().equals(session.id())) return "没有匹配的子任务";
+        if (child.result() != null) return "子任务已退出: " + child.id();
+        child.cancel();
+        return "已请求取消子任务: " + child.id();
+    }
+
+    /** 当前会话的查询/取消命令；不会把历史报告自动注入模型上下文。 */
     public String subagentCommand(String args) {
         String id = args.strip();
+        if (id.startsWith("cancel ")) return cancelSubagent(id.substring(7));
         String owner = session.id();
         if (!id.isEmpty()) {
             var child = subagents.find(id);
             if (child == null || !child.snapshot().parentSessionId().equals(owner)) return "没有匹配的子任务";
-            String identity = child.id() + " [" + child.snapshot().profile() + "] / tools="
+            String identity = child.id() + " [" + child.snapshot().profile() + "]"
+                    + (child.snapshot().runInBackground() ? " [后台]" : "") + " / tools="
                     + child.snapshot().tools().stream().sorted().toList()
                     + (child.snapshot().auditFile() == null ? "" : "\n审计日志: " + child.snapshot().auditFile());
             var result = child.result();
@@ -571,6 +593,7 @@ public final class AgentRunner implements AutoCloseable {
         for (var snapshot : subagents.snapshots()) {
             if (!snapshot.parentSessionId().equals(owner)) continue;
             text.append(snapshot.id()).append(" [").append(snapshot.profile()).append("] ")
+                    .append(snapshot.runInBackground() ? "[后台] " : "")
                     .append(snapshot.state()).append(" / ")
                     .append(snapshot.phase()).append(" / ").append(snapshot.iterations()).append(" 次迭代");
             text.append(" / ").append(snapshot.tools().size()).append(" 个工具");
@@ -590,14 +613,31 @@ public final class AgentRunner implements AutoCloseable {
         String sessionId = parent == null ? session.id() : currentSessionId.get();
         String turnId = parent == null ? UUID.randomUUID().toString() : parent.id();
         BooleanSupplier stopped = () -> cancelled.getAsBoolean() || (parent != null && parent.isCancelled());
+        if (request.runInBackground() && stopped.getAsBoolean()) return "子任务被中断，未启动";
         SubagentSpec spec = new SubagentSpec(sessionId, turnId, prompt, subagentTimeout, subagentMaxIterations,
-                request.profile(), request.tools());
-        TurnEventSink sink = TurnEventSink.current();
+                request.profile(), request.tools(), request.runInBackground());
+        TurnEventSink sink = request.runInBackground() ? null : TurnEventSink.current();
         SubagentHandle child;
         try {
-            child = subagents.start(spec, stopped, control -> subagentRunner.run(control, sink));
+            child = subagents.start(spec, request.runInBackground() ? () -> false : stopped,
+                    control -> subagentRunner.run(control, sink));
         } catch (IllegalStateException e) {
             return "子任务失败: " + e.getMessage();
+        }
+        if (request.runInBackground()) {
+            child.onComplete(result -> {
+                if (!sessionId.equals(session.id())) return;
+                var notice = new BackgroundNotice(sessionId, "⟣ 后台子任务结束: " + child.id()
+                        + " / " + result.exitReason() + " / " + result.stats().elapsedMillis() + "ms"
+                        + "；用 /subagents " + child.id() + " 或 task_status 查询报告");
+                // 通知有界；完整结果由管理器按既有保留策略持有。
+                if (!backgroundNotices.offer(notice)) {
+                    backgroundNotices.poll();
+                    backgroundNotices.offer(notice);
+                }
+            });
+            return "后台子任务已启动: " + child.id() + " / profile=" + request.profile().id()
+                    + " / " + child.snapshot().state() + "。完成后通知；用 task_status 查询结果，task_cancel 取消。";
         }
         if (sink != null && !stopped.getAsBoolean()) {
             sink.emit(new TurnEvent.Notice("⟣ 子任务开始: " + unicodePrefix(prompt.replace('\n', ' ').strip(), 50)
@@ -710,6 +750,7 @@ public final class AgentRunner implements AutoCloseable {
                 # 工具使用守则
                 - 委派调查用 task 的 explore 预设（默认）；明确委派文件修改可选择 edit，tools 只能进一步收窄预设工具
                 - edit 子任务会展示修改预览并遵循宿主权限确认，启动 task 的授权不等于文件写入授权；子任务不能执行命令，测试由主任务按授权完成
+                - explore 可设置 run_in_background=true，立即返回任务ID并在完成后通知；使用 task_status 查询结果、task_cancel 取消；通知不会自动发起模型轮次。后台任务不会随主轮次结束或取消而停止，会话切换或退出会清理它
                 - 按文件名或路径定位文件用 find_files，搜索文件内容用 grep，查看单层目录用 list_dir
                 - 查看仓库状态用 git_status，查看未暂存或已暂存差异用 git_diff；paths 是相对仓库根的字面路径
                 - 读取公共网页用 web_fetch，后续用 fetch_id 和 next_offset 分页；不执行 JavaScript，动态网页可能没有完整内容

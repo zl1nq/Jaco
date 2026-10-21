@@ -19,4 +19,8 @@ public final class TestStreams {
     public static ChatStream withCleanup(Runnable cleanup) {
         return new ChatStream(CompletableFuture.completedFuture(null), cleanup);
     }
+
+    public static void emit(ChatStream stream, StreamChunk chunk) {
+        stream.queue().offer(chunk);
+    }
 }
