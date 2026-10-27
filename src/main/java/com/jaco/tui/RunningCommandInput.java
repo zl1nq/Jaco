@@ -1,6 +1,6 @@
 package com.jaco.tui;
 
-/** raw mode 下的有界输入；整段粘贴及 Alt+Enter 换行不会自动提交。 */
+/** raw mode 下的有界输入；整段粘贴及 Shift+Enter 换行不会自动提交，兼容 Alt+Enter。 */
 final class RunningCommandInput {
     enum Action { NONE, EDITED, SUBMIT, CANCEL }
     private final StringBuilder text = new StringBuilder();
@@ -28,7 +28,8 @@ final class RunningCommandInput {
             escape.setLength(0);
             if (sequence.equals("\033[200~")) { pasting = true; previousCr = false; }
             else if (sequence.equals("\033[201~")) { pasting = false; previousCr = false; return Action.EDITED; }
-            else if (sequence.equals("\033[13;2u") && submitEmpty && !pasting) return append('\n');
+            else if ((sequence.equals("\033[13;2u") || sequence.equals("\033[27;2;13~"))
+                    && submitEmpty && !pasting) return append('\n');
             return Action.NONE;
         }
         if (key == 27) { escape.append((char) key); return Action.NONE; }

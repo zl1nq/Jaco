@@ -35,8 +35,8 @@ class PromptReaderTest {
         }
     }
 
-    @Test void altEnterAddsNewlineAndUnmatchedQuotesDoNotRequireShellContinuation() throws Exception {
-        for (String newlineKey : List.of("\033\r", "\033\n", "\033[13;2u")) {
+    @Test void shiftEnterAndAltEnterAddNewlineAndQuotesDoNotRequireShellContinuation() throws Exception {
+        for (String newlineKey : List.of("\033[13;2u", "\033[27;2;13~", "\033\r", "\033\n")) {
             String keys = "第一行" + newlineKey + "\"未闭合的引号!\\\r";
             try (var terminal = terminal(new ByteArrayInputStream(keys.getBytes(StandardCharsets.UTF_8)))) {
                 assertEquals("第一行\n\"未闭合的引号!\\", new PromptReader(terminal, null).readLine("> "));
@@ -67,6 +67,17 @@ class PromptReaderTest {
             String paste = "\033[200~第一行" + ending + ending + "第二行\t内容\033[2J\033[201~";
             paste.codePoints().forEach(key -> assertNotEquals(RunningCommandInput.Action.SUBMIT, input.accept(key)));
             assertEquals("第一行\n\n第二行\t内容", input.text());
+            assertEquals(RunningCommandInput.Action.SUBMIT, input.accept('\r'));
+        }
+    }
+
+    @Test void rawShiftEnterInsertsNewlineWithoutSubmission() {
+        for (String newlineKey : List.of("\033[13;2u", "\033[27;2;13~")) {
+            var input = new RunningCommandInput(2000, true);
+            "第一行".codePoints().forEach(input::accept);
+            newlineKey.codePoints().forEach(key -> assertNotEquals(RunningCommandInput.Action.SUBMIT, input.accept(key)));
+            "第二行".codePoints().forEach(input::accept);
+            assertEquals("第一行\n第二行", input.text());
             assertEquals(RunningCommandInput.Action.SUBMIT, input.accept('\r'));
         }
     }

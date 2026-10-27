@@ -226,7 +226,7 @@ public final class ConsoleApp {
                 first = false;
             }
             nextInput = pasted.toString();
-            println(ANSI_DIM + "内容已放入编辑框，回车发送，Alt+Enter 换行。" + ANSI_RESET);
+            println(ANSI_DIM + "内容已放入编辑框，回车发送，Shift+Enter 换行（兼容 Alt+Enter）。" + ANSI_RESET);
         } catch (UserInterruptException | EndOfFileException e) {
             println(ANSI_DIM + "已取消粘贴，内容未发送。" + ANSI_RESET);
         }
@@ -281,7 +281,7 @@ public final class ConsoleApp {
             println("  /" + c.name() + ANSI_DIM + "  " + c.description() + ANSI_RESET);
         }
         println(ANSI_DIM + "  Ctrl+C  中断本轮（取消流/杀命令/拒绝确认，已生成部分保留）" + ANSI_RESET);
-        println(ANSI_DIM + "  Enter 发送 · Alt+Enter 换行 · 支持整段粘贴；不支持的终端可先输入 /paste" + ANSI_RESET);
+        println(ANSI_DIM + "  Enter 发送 · Shift+Enter 换行（兼容 Alt+Enter）· 支持整段粘贴；不支持的终端可先输入 /paste" + ANSI_RESET);
         println(ANSI_DIM + "  运行期间可输入 /subagents [任务ID]、/help、/cancel，回车执行；Ctrl+U 清空输入" + ANSI_RESET);
     }
 
@@ -529,7 +529,7 @@ public final class ConsoleApp {
         }
         if (question.recommended() != null) println("│ 推荐理由：" + question.recommendationReason().replace("\n", " "));
         println("╰─ " + (question.recommended() == null ? "输入答案；/skip 跳过" : "输入编号或自定义答案；回车或 /skip 采用 " + question.recommended().label())
-                + "；/text 输入数字文本；Alt+Enter 换行，粘贴后回车提交；Ctrl+C 取消");
+                + "；/text 输入数字文本；Shift+Enter 换行（兼容 Alt+Enter），粘贴后回车提交；Ctrl+C 取消");
         RunningCommandInput answer = new RunningCommandInput(UserQuestion.MAX_ANSWER_LENGTH, true);
         drawInput("", "回答 ❯ ");
         while (request.active().getAsBoolean() && !handle.isCancelled()) {

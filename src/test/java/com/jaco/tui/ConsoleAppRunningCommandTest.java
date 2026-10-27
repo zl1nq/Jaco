@@ -348,7 +348,8 @@ class ConsoleAppRunningCommandTest {
 
     @Test void pureTextRequiresAnswerAndOversizedInputIsNotSilentlyTruncated() throws Exception {
         for (String input : List.of("\r补充说明\r", "x".repeat(2001) + "\r缩短答案\r", "/skip\r",
-                "\033[200~第一行\r\n\r\n第二行\033[201~\r", "第一行\033\r第二行\r")) {
+                "\033[200~第一行\r\n\r\n第二行\033[201~\r", "第一行\033\r第二行\r",
+                "第一行\033[13;2u第二行\r", "第一行\033[27;2;13~第二行\r")) {
             try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
                 Console console = new Console();
                 AtomicBoolean typed = new AtomicBoolean();

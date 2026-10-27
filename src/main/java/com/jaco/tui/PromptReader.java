@@ -20,7 +20,8 @@ final class PromptReader extends LineReaderImpl {
         getWidgets().put("jaco-newline", () -> { getBuffer().write('\n'); return true; });
         for (String name : new String[] { LineReader.EMACS, LineReader.VIINS }) {
             var keys = getKeyMaps().get(name);
-            if (keys != null) keys.bind(new Reference("jaco-newline"), "\033\r", "\033\n", "\033[13;2u");
+            if (keys != null) keys.bind(new Reference("jaco-newline"),
+                    "\033[13;2u", "\033[27;2;13~", "\033\r", "\033\n");
         }
     }
 
