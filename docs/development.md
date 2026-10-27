@@ -26,6 +26,8 @@
 
 代码高亮支持 Java、Python、JavaScript、Bash 和 JSON，其他语言原样显示；终端颜色自动探测 truecolor，并可降级为 256 色。
 
+Windows 原生终端由 `InteractiveTerminal` 选择 JNI 入口。`org.jline.terminal.impl.jni.win.ShiftEnterWindowsTerminal` 是针对固定 JLine 3.29 的小型桥接类：基类构造器为包可见，故单独放在相同包中，只扩展 Enter 的修饰键映射，输入泵、鼠标、信号和控制台模式恢复仍由 JLine 负责。升级 JLine 时需同时检查该构造器、工厂和原生事件回归；不能仅用预先编码的 CSI 字符串验证 Windows 组合键。`WindowsKeyInputTest` 覆盖 JLine 的原生按键转换，另提供独立控制台烟雾检查入口验证实际 JNI 适配器与编辑器链路。
+
 ## 开发与测试
 
 ```bash

@@ -13,7 +13,6 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.UserInterruptException;
 import org.jline.terminal.Terminal;
-import org.jline.terminal.TerminalBuilder;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -45,7 +44,7 @@ public final class ConsoleApp {
     private boolean readingInput;
 
     public ConsoleApp(AgentRunner agent) throws IOException {
-        this(agent, TerminalBuilder.builder().system(true).build(), null);
+        this(agent, InteractiveTerminal.open(), null);
     }
 
     /** 注入终端和行编辑器，以真实事件流验证运行期间的命令输入。 */
@@ -261,6 +260,12 @@ public final class ConsoleApp {
         println(ANSI_CYAN + BOLD + "jaco" + ANSI_RESET + ANSI_DIM + " ─────────────────────────────" + ANSI_RESET);
         println(ANSI_DIM + "│ model  " + ANSI_RESET + agent.modelName());
         println(ANSI_DIM + "│ 会话   " + ANSI_RESET + agent.session().id());
+        if (terminal instanceof org.jline.terminal.impl.jni.win.ShiftEnterWindowsTerminal)
+            println(ANSI_DIM + "│ 输入   Windows 原生按键 · Shift+Enter 换行" + ANSI_RESET);
+        else if (terminal instanceof org.jline.terminal.impl.AbstractWindowsTerminal<?>)
+            println(ANSI_DIM + "│ 输入   Windows 默认终端，原生组合键适配未启用，可使用 Alt+Enter" + ANSI_RESET);
+        else if (terminal.getType() != null && terminal.getType().startsWith("dumb"))
+            println(ANSI_DIM + "│ 输入   普通流式控制台；组合键可能无法区分，建议在 Terminal 中运行" + ANSI_RESET);
         println(ANSI_DIM + "│ /help 命令 · Ctrl+C 中断本轮" + ANSI_RESET);
         println(ANSI_DIM + "╰──────────────────────────────" + ANSI_RESET);
     }

@@ -22,7 +22,9 @@
 
 主输入框支持多行：**Enter 发送，Shift+Enter 换行**，同时保留 Alt+Enter 兼容。支持整段粘贴的终端会将多行内容留在同一个编辑框中，粘贴完成后再按 Enter 发送一次；CRLF、CR、LF 统一为换行，保留段落内的空行。输入中的引号或反斜杠不会触发 Shell 续行规则。整段多行内容即使包含 `/help` 等文本，也作为一条提示词发送，不逐行执行命令。
 
-Shift+Enter 需要终端发送独立的按键序列，支持 CSI-u 和 xterm modifyOtherKeys 格式。部分终端会将 Shift+Enter 与 Enter 都发送为同一个回车字符，应用无法区分；此时可使用 Alt+Enter，或配置终端让 Shift+Enter 发送 `\u001b[13;2u`，也可使用下述 `/paste` 模式。
+Windows 原生控制台使用专门的 JLine JNI 适配器，在原生按键事件的 Shift 信息丢失之前将 Shift+Enter 转成换行序列；不需要另外配置按键映射。启动横幅显示“Windows 原生按键 · Shift+Enter 换行”表示该入口已启用，主输入框及提问回答框共用同一输入处理。原生入口不可用时会回退默认终端并在日志记录原因，Windows 默认入口会明确显示适配未启用。
+
+其他终端支持 CSI-u 和 xterm modifyOtherKeys 格式。若终端在送入应用前就把 Shift+Enter 与 Enter 合并为同一回车字符，应用无法恢复修饰键；可使用 Alt+Enter、配置 Shift+Enter 发送 `\u001b[13;2u`，或使用下述 `/paste` 模式。IDEA 的普通 Run 控制台与 Terminal 面板是不同的输入入口，组合键测试建议在 PowerShell 控制台或 IDEA 的 **Terminal** 面板运行 JAR。修改源码后需要重新构建并重启 JAR；旧 JAR 不会自动加载新实现。
 
 如果终端把粘贴内容逐行提交，先在 **JACO 内**输入 `/paste` 并回车，然后粘贴全部内容，最后独立一行输入 `/end`。收集期间不发送模型请求、不执行粘贴内容中的命令；结束后整段内容回到编辑框，确认后再按 Enter 发送。Ctrl+C 或输入关闭取消本次收集。兼容模式中的独立 `/end` 行为结束标记，需要包含这个字面行时使用普通整段粘贴。
 
