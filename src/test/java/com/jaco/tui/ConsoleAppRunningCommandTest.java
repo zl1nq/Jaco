@@ -347,7 +347,8 @@ class ConsoleAppRunningCommandTest {
     }
 
     @Test void pureTextRequiresAnswerAndOversizedInputIsNotSilentlyTruncated() throws Exception {
-        for (String input : List.of("\r补充说明\r", "x".repeat(2001) + "\r缩短答案\r", "/skip\r")) {
+        for (String input : List.of("\r补充说明\r", "x".repeat(2001) + "\r缩短答案\r", "/skip\r",
+                "\033[200~第一行\r\n\r\n第二行\033[201~\r", "第一行\033\r第二行\r")) {
             try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
                 Console console = new Console();
                 AtomicBoolean typed = new AtomicBoolean();
@@ -364,7 +365,9 @@ class ConsoleAppRunningCommandTest {
                 if (input.startsWith("/skip")) assertEquals("skipped", answer.get().status());
                 else {
                     assertEquals("custom_text", answer.get().source());
-                    assertEquals(input.startsWith("x") ? "缩短答案" : "补充说明", answer.get().customText());
+                    String expected = input.startsWith("x") ? "缩短答案" : input.startsWith("\033[200~")
+                            ? "第一行\n\n第二行" : input.startsWith("第一行") ? "第一行\n第二行" : "补充说明";
+                    assertEquals(expected, answer.get().customText());
                 }
                 assertFalse(console.text().contains("已采用推荐项"));
             }
@@ -441,5 +444,55 @@ class ConsoleAppRunningCommandTest {
             assertEquals(1, loaded.messages().stream().filter(m -> m.role() == Role.USER).count());
             assertTrue(loaded.messages().stream().anyMatch(m -> m.role() == Role.TOOL && m.content().contains("recommended_default")));
         } finally { ask.close(); }
+    }
+
+    @Test void pasteModeCollectsLegacyMultilineInputBeforeOneExplicitSubmission() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        var client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request) {
+                calls.incrementAndGet();
+                assertEquals("/help\n第一行\n\n第二行😀", request.messages().getLast().content());
+                return TestStreams.of(new StreamChunk.Delta("收到整段提示词"), new StreamChunk.Done("stop", null));
+            }
+        };
+        try (var agent = agent(client, new ToolRegistry())) {
+            Console console = new Console();
+            AtomicInteger lines = new AtomicInteger();
+            console.readLine = args -> switch (lines.getAndIncrement()) {
+                case 0 -> "/paste";
+                case 1 -> "/help";
+                case 2 -> "第一行";
+                case 3 -> "";
+                case 4 -> "第二行😀";
+                case 5 -> "/end";
+                case 6 -> {
+                    assertEquals(0, calls.get());
+                    assertEquals("/help\n第一行\n\n第二行😀", args[2]);
+                    yield (String) args[2];
+                }
+                default -> "/exit";
+            };
+            assertTimeoutPreemptively(Duration.ofSeconds(5), () -> console.app(agent).run());
+            assertEquals(1, calls.get());
+            assertEquals(1, agent.session().messages().stream().filter(m -> m.role() == Role.USER).count());
+        }
+    }
+
+    @Test void cancellingPasteModeDoesNotSubmitOrDispatchPastedCommands() throws Exception {
+        try (var agent = agent(null, new ToolRegistry())) {
+            Console console = new Console();
+            AtomicInteger lines = new AtomicInteger();
+            console.readLine = args -> switch (lines.getAndIncrement()) {
+                case 0 -> "/paste";
+                case 1 -> "/new";
+                case 2 -> throw new org.jline.reader.UserInterruptException("");
+                default -> "/exit";
+            };
+            String sessionId = agent.session().id();
+            console.app(agent).run();
+            assertEquals(sessionId, agent.session().id());
+            assertTrue(agent.session().messages().isEmpty());
+            assertTrue(console.text().contains("已取消粘贴"));
+        }
     }
 }

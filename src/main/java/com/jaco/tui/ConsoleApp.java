@@ -11,7 +11,6 @@ import com.jaco.render.Ansi;
 import com.jaco.render.Span;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
-import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
@@ -53,15 +52,17 @@ public final class ConsoleApp {
     ConsoleApp(AgentRunner agent, Terminal terminal, LineReader lineReader) {
         this.agent = agent;
         this.terminal = terminal;
-        this.reader = lineReader != null ? lineReader : LineReaderBuilder.builder()
-                .terminal(terminal)
-                .variable(LineReader.HISTORY_FILE, Path.of(
-                        System.getProperty("jaco.home"), "history"))
-                .build();
+        this.reader = lineReader != null ? lineReader : new PromptReader(terminal,
+                Path.of(System.getProperty("jaco.home"), "history"));
         registerCommands();
     }
 
     private void registerCommands() {
+        commands.put("paste", new Command.Simple("paste", "多行粘贴兼容模式：独立一行 /end 结束，Ctrl+C 取消", args -> {
+            if (!args.isBlank()) { println("用法：/paste"); return true; }
+            collectPaste();
+            return true;
+        }));
         commands.put("help", new Command.Simple("help", "显示可用命令", args -> {
             printHelp();
             return true;
@@ -196,11 +197,11 @@ public final class ConsoleApp {
                 printInputFrameBottom();
                 break;
             }
-            line = line.strip();
+            line = PromptReader.normalize(line).strip();
             if (line.isEmpty()) {
                 continue;
             }
-            if (line.startsWith("/")) {
+            if (line.startsWith("/") && !line.contains("\n")) {
                 if (!dispatch(line)) {
                     break;
                 }
@@ -210,6 +211,25 @@ public final class ConsoleApp {
         }
         flushProfile();
         println(ANSI_DIM + "再见。" + ANSI_RESET);
+    }
+
+    private void collectPaste() {
+        println(ANSI_DIM + "粘贴多行内容；独立一行输入 /end 结束，返回编辑框后回车发送；Ctrl+C 取消。" + ANSI_RESET);
+        StringBuilder pasted = new StringBuilder();
+        boolean first = true;
+        try {
+            while (true) {
+                String line = reader.readLine("粘贴 │ ");
+                if (line.equals("/end")) break;
+                if (!first) pasted.append('\n');
+                pasted.append(PromptReader.normalize(line));
+                first = false;
+            }
+            nextInput = pasted.toString();
+            println(ANSI_DIM + "内容已放入编辑框，回车发送，Alt+Enter 换行。" + ANSI_RESET);
+        } catch (UserInterruptException | EndOfFileException e) {
+            println(ANSI_DIM + "已取消粘贴，内容未发送。" + ANSI_RESET);
+        }
     }
 
     /** 开口边框最多 24 列，保留终端最后一列，降低历史输出在窗口缩小时的折行。 */
@@ -261,6 +281,7 @@ public final class ConsoleApp {
             println("  /" + c.name() + ANSI_DIM + "  " + c.description() + ANSI_RESET);
         }
         println(ANSI_DIM + "  Ctrl+C  中断本轮（取消流/杀命令/拒绝确认，已生成部分保留）" + ANSI_RESET);
+        println(ANSI_DIM + "  Enter 发送 · Alt+Enter 换行 · 支持整段粘贴；不支持的终端可先输入 /paste" + ANSI_RESET);
         println(ANSI_DIM + "  运行期间可输入 /subagents [任务ID]、/help、/cancel，回车执行；Ctrl+U 清空输入" + ANSI_RESET);
     }
 
@@ -281,6 +302,7 @@ public final class ConsoleApp {
         StringBuilder pending = new StringBuilder();
         var savedAttributes = terminal.getAttributes();
         terminal.enterRawMode();
+        rawPasteMode(true);
 
         Usage usage = null;
         String finishReason = null;
@@ -400,6 +422,7 @@ public final class ConsoleApp {
                         String answer = askApproval(a);
                         a.resolver().accept(answer);
                         terminal.enterRawMode();
+                        rawPasteMode(true);
                     }
                 } else if (event instanceof TurnEvent.QuestionRequest question) {
                     if (question.active().getAsBoolean()) {
@@ -446,6 +469,7 @@ public final class ConsoleApp {
                 println(ANSI_DIM + "（本轮已结束，未提交的输入保留到输入框）" + ANSI_RESET);
             }
             terminal.writer().flush();
+            rawPasteMode(false);
             terminal.setAttributes(savedAttributes);
         }
         ensureLineStart();
@@ -475,6 +499,7 @@ public final class ConsoleApp {
     }
 
     private void drawInput(String text, String label) {
+        text = text.replace("\n", " ↵ ").replace("\t", "    ");
         int width = terminal.getWidth() > 0 ? terminal.getWidth() : 80;
         String prefix = width >= 16 ? label : width >= 4 ? "> " : "";
         int available = Math.max(1, width - com.jaco.render.DisplayWidth.width(prefix) - 1);
@@ -504,7 +529,7 @@ public final class ConsoleApp {
         }
         if (question.recommended() != null) println("│ 推荐理由：" + question.recommendationReason().replace("\n", " "));
         println("╰─ " + (question.recommended() == null ? "输入答案；/skip 跳过" : "输入编号或自定义答案；回车或 /skip 采用 " + question.recommended().label())
-                + "；/text 输入数字文本；Ctrl+C 取消");
+                + "；/text 输入数字文本；Alt+Enter 换行，粘贴后回车提交；Ctrl+C 取消");
         RunningCommandInput answer = new RunningCommandInput(UserQuestion.MAX_ANSWER_LENGTH, true);
         drawInput("", "回答 ❯ ");
         while (request.active().getAsBoolean() && !handle.isCancelled()) {
@@ -540,6 +565,10 @@ public final class ConsoleApp {
 
     void dispatchRunningCommand(String input, TurnHandle handle) {
         String line = input.strip();
+        if (line.contains("\n")) {
+            println(ANSI_YELLOW + "运行期间只支持单行命令，请等本轮结束后发送多行任务。" + ANSI_RESET);
+            return;
+        }
         String command = line.split("\\s+", 2)[0];
         if (command.equals("/subagents") || command.equals("/help")) {
             dispatch(line);
@@ -547,6 +576,13 @@ public final class ConsoleApp {
             handle.cancel();
         } else {
             println(ANSI_YELLOW + "运行期间支持 /subagents [任务ID]、/help、/cancel；其他命令请在本轮结束后执行。" + ANSI_RESET);
+        }
+    }
+
+    private void rawPasteMode(boolean enabled) {
+        if (terminal.getType() != null && !terminal.getType().startsWith("dumb")) {
+            terminal.writer().print(enabled ? "\033[?2004h" : "\033[?2004l");
+            terminal.writer().flush();
         }
     }
 
