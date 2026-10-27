@@ -49,11 +49,13 @@ class ConsoleAppRunningCommandTest {
         final StringWriter output = new StringWriter();
         final ArrayDeque<Integer> keys = new ArrayDeque<>();
         IntConsumer onRead = count -> { };
+        Runnable onIdle = () -> { };
         Function<Object[], String> readLine = args -> { throw new EndOfFileException(); };
         java.util.function.Consumer<String> printAbove = text -> { };
         int reads;
         final NonBlockingReader input = new NonBlockingReader() {
             @Override protected int read(long timeout, boolean peek) {
+                if (keys.isEmpty()) onIdle.run();
                 if (keys.isEmpty()) return READ_EXPIRED;
                 int key = peek ? keys.peek() : keys.remove();
                 if (!peek) onRead.accept(++reads);
@@ -308,5 +310,136 @@ class ConsoleAppRunningCommandTest {
             assertTrue(console.text().contains("修改预览"));
             assertTrue(console.text().contains("需要确认"));
         }
+    }
+
+    private static com.jaco.tool.UserQuestion question(boolean choices) {
+        return new com.jaco.tool.UserQuestion("format", "格式", "配置采用哪种格式？", choices ? List.of(
+                new com.jaco.tool.UserQuestion.Option("yaml", "YAML", "适合人工编辑", true),
+                new com.jaco.tool.UserQuestion.Option("json", "JSON", "便于程序处理", false)) : List.of(), choices ? "支持注释" : "");
+    }
+
+    @Test void questionUiSupportsDefaultSkipChoiceFreeTextAndInvalidRetry() throws Exception {
+        for (String input : List.of("\r", "/skip\r", "2\r", "自定义\r", "/text 123\r", "9\r2\r")) {
+            try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
+                Console console = new Console();
+                AtomicBoolean typed = new AtomicBoolean();
+                console.onIdle = () -> {
+                    if (console.text().contains("回答 ❯") && typed.compareAndSet(false, true)) console.type(input);
+                };
+                var question = question(true);
+                AtomicReference<com.jaco.tool.UserQuestion.Answer> answer = new AtomicReference<>();
+                TestTurnEvents.emit(handle, new TurnEvent.QuestionRequest("request", question, submission -> {
+                    answer.set(question.answer(submission));
+                    TestTurnEvents.emit(handle, new TurnEvent.Done(null, "stop", false, false, null, 1));
+                }, () -> !handle.isCancelled() && answer.get() == null));
+                assertTimeoutPreemptively(Duration.ofSeconds(3), () -> assertTrue(console.app(agent).consumeTurn(handle)));
+                assertNotNull(answer.get());
+                if (input.equals("\r") || input.startsWith("/skip")) {
+                    assertEquals("recommended_default", answer.get().source());
+                    assertTrue(console.text().contains("已采用推荐项：YAML"));
+                } else if (input.equals("2\r") || input.startsWith("9")) assertEquals("json", answer.get().selectedOptionIds().getFirst());
+                else assertEquals("custom_text", answer.get().source());
+                assertTrue(console.text().contains("支持注释"));
+                assertTrue(console.text().contains("适合人工编辑"));
+                assertFalse(console.text().contains("允许?"));
+            }
+        }
+    }
+
+    @Test void pureTextRequiresAnswerAndOversizedInputIsNotSilentlyTruncated() throws Exception {
+        for (String input : List.of("\r补充说明\r", "x".repeat(2001) + "\r缩短答案\r", "/skip\r")) {
+            try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
+                Console console = new Console();
+                AtomicBoolean typed = new AtomicBoolean();
+                console.onIdle = () -> {
+                    if (console.text().contains("回答 ❯") && typed.compareAndSet(false, true)) console.type(input);
+                };
+                var question = question(false);
+                AtomicReference<com.jaco.tool.UserQuestion.Answer> answer = new AtomicReference<>();
+                TestTurnEvents.emit(handle, new TurnEvent.QuestionRequest("r", question, submission -> {
+                    answer.set(question.answer(submission));
+                    TestTurnEvents.emit(handle, new TurnEvent.Done(null, "stop", false, false, null, 1));
+                }, () -> !handle.isCancelled() && answer.get() == null));
+                assertTimeoutPreemptively(Duration.ofSeconds(3), () -> console.app(agent).consumeTurn(handle));
+                if (input.startsWith("/skip")) assertEquals("skipped", answer.get().status());
+                else {
+                    assertEquals("custom_text", answer.get().source());
+                    assertEquals(input.startsWith("x") ? "缩短答案" : "补充说明", answer.get().customText());
+                }
+                assertFalse(console.text().contains("已采用推荐项"));
+            }
+        }
+    }
+
+    @Test void cancelEofAndExternalCancellationNeverChooseDefaults() throws Exception {
+        for (int key : List.of(3, 4, -1, -2)) {
+            try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
+                Console console = new Console();
+                AtomicBoolean answered = new AtomicBoolean();
+                AtomicInteger idle = new AtomicInteger();
+                console.onIdle = () -> {
+                    if (console.text().contains("回答 ❯") && idle.incrementAndGet() == 20) {
+                        if (key == -2) handle.cancel(); else console.keys.add(key);
+                    }
+                };
+                TestTurnEvents.emit(handle, new TurnEvent.QuestionRequest("r", question(true), s -> answered.set(true), () -> !handle.isCancelled()));
+                assertTimeoutPreemptively(Duration.ofSeconds(3), () -> assertFalse(console.app(agent).consumeTurn(handle)));
+                assertFalse(answered.get());
+                assertFalse(console.text().contains("已采用推荐项"));
+            }
+        }
+    }
+
+    @Test void questionWaitsForPendingRunningInputAndStaleQuestionIsIgnored() throws Exception {
+        for (boolean active : List.of(false, true)) {
+            try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
+                Console console = new Console();
+                console.type("/");
+                AtomicBoolean cleared = new AtomicBoolean(), typed = new AtomicBoolean(), answered = new AtomicBoolean();
+                console.onIdle = () -> {
+                    if (console.text().contains("有问题待回答") && cleared.compareAndSet(false, true)) console.keys.add(21);
+                    if (console.text().contains("回答 ❯") && typed.compareAndSet(false, true)) console.type("2\r");
+                };
+                TestTurnEvents.emit(handle, new TurnEvent.QuestionRequest("r", question(true), s -> {
+                    assertEquals("json", s.selectedOptionId()); answered.set(true);
+                    TestTurnEvents.emit(handle, new TurnEvent.Done(null, "stop", false, false, null, 1));
+                }, () -> active && !answered.get() && !handle.isCancelled()));
+                if (!active) TestTurnEvents.emit(handle, new TurnEvent.Done(null, "stop", false, false, null, 1));
+                assertTimeoutPreemptively(Duration.ofSeconds(3), () -> console.app(agent).consumeTurn(handle));
+                assertEquals(active, answered.get());
+                if (active) assertTrue(cleared.get());
+                else assertFalse(console.text().contains("回答 ❯"));
+            }
+        }
+    }
+
+    @Test void realModelToolQuestionAnswerAndContinuationArePersistedAsToolResult() throws Exception {
+        ToolRegistry registry = new ToolRegistry();
+        var ask = new com.jaco.tool.builtin.AskUserQuestionTool();
+        registry.register(ask);
+        AtomicInteger calls = new AtomicInteger();
+        var client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request) {
+                if (calls.getAndIncrement() == 0) return TestStreams.of(new StreamChunk.ToolCallDelta(0, "question", "ask_user_question", """
+                        {"questions":[{"id":"format","question":"格式？","recommendation_reason":"支持注释",
+                        "options":[{"id":"yaml","label":"YAML","recommended":true},{"id":"json","label":"JSON"}]}]}
+                        """), new StreamChunk.Done("tool_calls", null));
+                var result = request.messages().getLast();
+                assertEquals(Role.TOOL, result.role());
+                assertTrue(result.content().contains("recommended_default"));
+                assertTrue(result.content().contains("empty_submit"));
+                return TestStreams.of(new StreamChunk.Delta("采用推荐项 YAML"), new StreamChunk.Done("stop", null));
+            }
+        };
+        try (var agent = agent(client, registry)) {
+            Console console = new Console();
+            AtomicBoolean typed = new AtomicBoolean();
+            console.onIdle = () -> { if (console.text().contains("回答 ❯") && typed.compareAndSet(false, true)) console.type("\r"); };
+            assertTimeoutPreemptively(Duration.ofSeconds(3), () -> assertTrue(console.app(agent).consumeTurn(agent.runTurn("请创建配置"))));
+            assertEquals(2, calls.get());
+            var loaded = new SessionStore(tmp).load(agent.session().id()).orElseThrow();
+            assertEquals(1, loaded.messages().stream().filter(m -> m.role() == Role.USER).count());
+            assertTrue(loaded.messages().stream().anyMatch(m -> m.role() == Role.TOOL && m.content().contains("recommended_default")));
+        } finally { ask.close(); }
     }
 }

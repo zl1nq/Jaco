@@ -4,6 +4,8 @@ import com.jaco.agent.AgentRunner;
 import com.jaco.agent.TurnEvent;
 import com.jaco.agent.TurnHandle;
 import com.jaco.llm.Usage;
+import com.jaco.tool.UserQuestion;
+import com.jaco.tool.ToolException;
 import com.jaco.render.MarkdownRenderer;
 import com.jaco.render.Ansi;
 import com.jaco.render.Span;
@@ -290,7 +292,7 @@ public final class ConsoleApp {
         boolean replyLabeled = false;
         RunningCommandInput input = new RunningCommandInput();
         boolean inputVisible = false;
-        TurnEvent.ApprovalRequest deferredApproval = null;
+        var deferredRequests = new java.util.ArrayDeque<TurnEvent>();
 
         try {
             while (true) {
@@ -315,14 +317,13 @@ public final class ConsoleApp {
                         ensureLineStart();
                     }
                 }
-                if (handle.isCancelled()) deferredApproval = null;
+                if (handle.isCancelled()) deferredRequests.clear();
                 TurnEvent event;
                 String notice = agent.pollSubagentNotice();
                 if (notice != null) {
                     event = new TurnEvent.Notice(notice);
-                } else if (deferredApproval != null && input.isEmpty()) {
-                    event = deferredApproval;
-                    deferredApproval = null;
+                } else if (!deferredRequests.isEmpty() && input.isEmpty()) {
+                    event = deferredRequests.removeFirst();
                 } else {
                     event = handle.poll(60);
                 }
@@ -392,13 +393,25 @@ public final class ConsoleApp {
                 } else if (event instanceof TurnEvent.ApprovalRequest a) {
                     // 用户正在输入时延后确认，不能让剩余按键被当作授权答案。
                     if (!input.isEmpty()) {
-                        deferredApproval = a;
+                        deferredRequests.addLast(a);
                     } else {
                         terminal.writer().flush();
                         terminal.setAttributes(savedAttributes);
                         String answer = askApproval(a);
                         a.resolver().accept(answer);
                         terminal.enterRawMode();
+                    }
+                } else if (event instanceof TurnEvent.QuestionRequest question) {
+                    if (question.active().getAsBoolean()) {
+                        if (!input.isEmpty()) {
+                            deferredRequests.addLast(question);
+                            println(ANSI_DIM + "（有问题待回答，请先提交当前运行命令，或按 Ctrl+U 清空输入）" + ANSI_RESET);
+                        } else {
+                            spinner.stop();
+                            sawOutput = true;
+                            flushPending(renderer, pending);
+                            askQuestion(question, handle);
+                        }
                     }
                 } else if (event instanceof TurnEvent.Done d) {
                     usage = d.usage();
@@ -458,14 +471,71 @@ public final class ConsoleApp {
 
     private void drawRunningInput(String text) {
         // 只显示一行尾部，避免窄终端换行后清除到模型输出。
+        drawInput(text, "运行命令 ❯ ");
+    }
+
+    private void drawInput(String text, String label) {
         int width = terminal.getWidth() > 0 ? terminal.getWidth() : 80;
-        String prefix = width >= 16 ? "运行命令 ❯ " : width >= 4 ? "> " : "";
+        String prefix = width >= 16 ? label : width >= 4 ? "> " : "";
         int available = Math.max(1, width - com.jaco.render.DisplayWidth.width(prefix) - 1);
-        String visible = text;
-        while (com.jaco.render.DisplayWidth.width(visible) > available) {
-            visible = visible.substring(visible.offsetByCodePoints(0, 1));
+        int start = text.length(), used = 0;
+        while (start > 0) {
+            int previous = text.offsetByCodePoints(start, -1);
+            int columns = com.jaco.render.DisplayWidth.width(text.substring(previous, start));
+            if (used + columns > available) break;
+            used += columns;
+            start = previous;
         }
+        String visible = text.substring(start);
         rawPrint(ANSI_GREEN + prefix + visible + ANSI_RESET);
+    }
+
+    /** 保持 raw mode，用短轮询响应外部取消，不把未作答当成采用推荐项。 */
+    private void askQuestion(TurnEvent.QuestionRequest request, TurnHandle handle) throws IOException {
+        UserQuestion question = request.question();
+        ensureLineStart();
+        println(ANSI_YELLOW + "╭─ " + (question.options().isEmpty() ? "需要补充信息" : "需要你的选择")
+                + (question.header().isBlank() ? "" : " · " + question.header()) + ANSI_RESET);
+        for (String line : question.question().split("\n")) println("│ " + line);
+        for (int i = 0; i < question.options().size(); i++) {
+            var option = question.options().get(i);
+            println("│ " + (i + 1) + ". " + option.label() + (option.recommended() ? "（推荐）" : ""));
+            if (!option.description().isBlank()) println("│    " + option.description().replace("\n", " "));
+        }
+        if (question.recommended() != null) println("│ 推荐理由：" + question.recommendationReason().replace("\n", " "));
+        println("╰─ " + (question.recommended() == null ? "输入答案；/skip 跳过" : "输入编号或自定义答案；回车或 /skip 采用 " + question.recommended().label())
+                + "；/text 输入数字文本；Ctrl+C 取消");
+        RunningCommandInput answer = new RunningCommandInput(UserQuestion.MAX_ANSWER_LENGTH, true);
+        drawInput("", "回答 ❯ ");
+        while (request.active().getAsBoolean() && !handle.isCancelled()) {
+            int key = terminal.reader().read(50L);
+            if (key == 4 || key == -1) { handle.cancel(); break; }
+            var action = answer.accept(key);
+            if (action == RunningCommandInput.Action.CANCEL) { handle.cancel(); break; }
+            if (action == RunningCommandInput.Action.SUBMIT) {
+                clearRunningInput();
+                try {
+                    if (answer.overflowed()) throw new ToolException("答案超过 2000 字符，请缩短后重新输入");
+                    var submission = question.parseInput(request.requestId(), answer.text());
+                    var resolved = question.answer(submission);
+                    if (!request.active().getAsBoolean() || handle.isCancelled()) return;
+                    request.resolver().accept(submission);
+                    if (resolved.source().equals("recommended_default")) println(ANSI_DIM + "已采用推荐项：" + question.recommended().label() + ANSI_RESET);
+                    else if (resolved.source().equals("user_selection")) println("已选择：" + question.options().stream()
+                            .filter(o -> o.id().equals(resolved.selectedOptionIds().getFirst())).findFirst().orElseThrow().label());
+                    else println(resolved.status().equals("skipped") ? "已跳过，未提供答案" : "已回答：" + resolved.customText());
+                    return;
+                } catch (ToolException e) {
+                    println(ANSI_YELLOW + e.getMessage() + ANSI_RESET);
+                    answer.clear();
+                    drawInput("", "回答 ❯ ");
+                }
+            } else if (action == RunningCommandInput.Action.EDITED) {
+                clearRunningInput();
+                drawInput(answer.text(), "回答 ❯ ");
+            }
+        }
+        clearRunningInput();
     }
 
     void dispatchRunningCommand(String input, TurnHandle handle) {

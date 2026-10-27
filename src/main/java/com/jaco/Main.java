@@ -23,6 +23,7 @@ import com.jaco.tool.builtin.FindFilesTool;
 import com.jaco.tool.builtin.EditFileTool;
 import com.jaco.tool.builtin.ListDirTool;
 import com.jaco.tool.builtin.ReadFileTool;
+import com.jaco.tool.builtin.AskUserQuestionTool;
 import com.jaco.tool.builtin.RecallTool;
 import com.jaco.tool.builtin.RunCommandTool;
 import com.jaco.tool.builtin.WriteFileTool;
@@ -84,6 +85,8 @@ public final class Main {
         registry.register(new GitDiffTool());
         registry.register(new FindFilesTool());
         registry.register(new RecallTool());
+        AskUserQuestionTool askUser = new AskUserQuestionTool();
+        registry.register(askUser);
         com.jaco.tool.builtin.TaskTool taskTool = new com.jaco.tool.builtin.TaskTool();
         registry.register(taskTool);
 
@@ -100,7 +103,7 @@ public final class Main {
                 provider,
                 config.systemPrompt(),
                 sessions,
-                new HookChain(List.of(permissionHook, background, webFetch)),
+                new HookChain(List.of(permissionHook, background, webFetch, askUser)),
                 registry,
                 sandbox,
                 workspaceRoot,
@@ -121,6 +124,7 @@ public final class Main {
         registry.register(new TaskCancelTool(agent::cancelSubagent));
 
         Thread shutdown = new Thread(() -> {
+            askUser.close();
             agent.close();
             webFetch.close();
             background.close();
@@ -129,6 +133,7 @@ public final class Main {
         try {
             new ConsoleApp(agent).run();
         } finally {
+            askUser.close();
             agent.close();
             webFetch.close();
             background.close();

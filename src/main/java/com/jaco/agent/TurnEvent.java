@@ -33,6 +33,11 @@ public sealed interface TurnEvent {
         public ApprovalRequest(String tool, String detail, Consumer<String> resolver) { this(tool, detail, resolver, null); }
     }
 
+    /** 主任务提问；过期请求不能展示或接收回答。提交必须来自用户动作，静默不触发默认。 */
+    record QuestionRequest(String requestId, com.jaco.tool.UserQuestion question,
+                           Consumer<com.jaco.tool.UserQuestion.Submission> resolver,
+                           java.util.function.BooleanSupplier active) implements TurnEvent {}
+
     /** 非正文的状态提示（如上下文压缩进度）。 */
     record Notice(String text) implements TurnEvent {
     }

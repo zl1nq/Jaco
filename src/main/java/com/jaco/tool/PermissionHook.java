@@ -48,6 +48,7 @@ public final class PermissionHook implements AgentHook {
     @Override
     public HookVerdict onBeforeToolCall(ToolCall call) {
         String name = call.function().name();
+        if (name.equals("ask_user_question")) return HookVerdict.allow();
         if (name.equals("web_fetch")) {
             try {
                 var args = MAPPER.readTree(call.function().arguments());

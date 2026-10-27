@@ -6,6 +6,12 @@ final class RunningCommandInput {
     private final StringBuilder text = new StringBuilder();
     private boolean escape;
     private boolean sequence;
+    private boolean overflowed;
+    private final int maxLength;
+    private final boolean submitEmpty;
+
+    RunningCommandInput() { this(512, false); }
+    RunningCommandInput(int maxLength, boolean submitEmpty) { this.maxLength = maxLength; this.submitEmpty = submitEmpty; }
 
     Action accept(int key) {
         if (key == 3) { clear(); return Action.CANCEL; }
@@ -16,20 +22,23 @@ final class RunningCommandInput {
             return Action.NONE;
         }
         if (key == 27) { escape = true; return Action.NONE; }
-        if (key == '\r' || key == '\n') return text.isEmpty() ? Action.NONE : Action.SUBMIT;
+        if (key == '\r' || key == '\n') return text.isEmpty() && !submitEmpty ? Action.NONE : Action.SUBMIT;
         if (key == 21) { clear(); return Action.EDITED; } // Ctrl+U
         if (key == 8 || key == 127) {
             if (!text.isEmpty()) text.setLength(text.offsetByCodePoints(text.length(), -1));
+            overflowed = false;
             return Action.EDITED;
         }
-        if (!Character.isISOControl(key) && text.length() + Character.charCount(key) <= 512) {
+        if (!Character.isISOControl(key) && text.length() + Character.charCount(key) <= maxLength) {
             text.appendCodePoint(key);
             return Action.EDITED;
         }
+        if (!Character.isISOControl(key)) overflowed = true;
         return Action.NONE;
     }
 
     String text() { return text.toString(); }
     boolean isEmpty() { return text.isEmpty(); }
-    void clear() { text.setLength(0); escape = false; sequence = false; }
+    boolean overflowed() { return overflowed; }
+    void clear() { text.setLength(0); escape = false; sequence = false; overflowed = false; }
 }

@@ -748,6 +748,9 @@ public final class AgentRunner implements AutoCloseable {
                   用户明确要求记住或忘记时可简短确认需求，不宣称尚未实际完成的保存、删除；完整记录可用 /memory 查看。
 
                 # 工具使用守则
+                - 仅在缺失信息影响后续工作且无法合理判断时，用 ask_user_question 提问；第一版仅主任务可用，一次最多 3 题
+                - 有选项时提供 2～5 项、恰好一个推荐项及 recommendation_reason，始终允许自由输入；纯文本题省略 options
+                - 空提交或主动跳过采用推荐项，静默不自动提交；根据返回的 source 表述答案，默认采用不能称为用户明确选择，也不能代替写入或命令权限；unavailable 时不得假定用户作答
                 - 委派调查用 task 的 explore 预设（默认）；明确委派文件修改可选择 edit，tools 只能进一步收窄预设工具
                 - edit 子任务会展示修改预览并遵循宿主权限确认，启动 task 的授权不等于文件写入授权；子任务不能执行命令，测试由主任务按授权完成
                 - explore 可设置 run_in_background=true，立即返回任务ID并在完成后通知；使用 task_status 查询结果、task_cancel 取消；通知不会自动发起模型轮次。后台任务不会随主轮次结束或取消而停止，会话切换或退出会清理它
