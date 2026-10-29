@@ -371,6 +371,39 @@ class ConsoleAppRunningCommandTest {
         }
     }
 
+    @Test void overflowIsReportedBeforeSubmissionAndRetainedAnswerCanBeShortened() throws Exception {
+        for (boolean paste : List.of(false, true)) {
+            Console console = new Console();
+            AtomicInteger stage = new AtomicInteger();
+            console.onIdle = () -> {
+                if (!console.text().contains("回答 ❯")) return;
+                switch (stage.getAndIncrement()) {
+                    case 0 -> console.type((paste ? "\033[200~" : "") + "x".repeat(2002)
+                            + (paste ? "\r\nignored\033[201~" : ""));
+                    case 1 -> {
+                        assertEquals(1, console.text().split("输入达到上限，部分内容未录入", -1).length - 1);
+                        console.type("\r");
+                    }
+                    case 2 -> console.type("\177\r");
+                }
+            };
+            assertEquals("x".repeat(1999), answerQuestion(console, false).customText());
+        }
+    }
+
+    private com.jaco.tool.UserQuestion.Answer answerQuestion(Console console, boolean choices) throws Exception {
+        try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
+            var question = question(choices);
+            AtomicReference<com.jaco.tool.UserQuestion.Answer> answer = new AtomicReference<>();
+            TestTurnEvents.emit(handle, new TurnEvent.QuestionRequest("r", question, s -> {
+                answer.set(question.answer(s));
+                TestTurnEvents.emit(handle, new TurnEvent.Done(null, "stop", false, false, null, 1));
+            }, () -> !handle.isCancelled() && answer.get() == null));
+            assertTimeoutPreemptively(Duration.ofSeconds(3), () -> console.app(agent).consumeTurn(handle));
+            return answer.get();
+        }
+    }
+
     @Test void pureTextRequiresAnswerAndOversizedInputIsNotSilentlyTruncated() throws Exception {
         for (String input : List.of("\r补充说明\r", "x".repeat(2001) + "\r\025缩短答案\r", "/skip\r",
                 "\033[200~第一行\r\n\r\n第二行\033[201~\r", "第一行\033\r第二行\r",

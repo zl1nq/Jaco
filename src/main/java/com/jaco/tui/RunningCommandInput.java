@@ -2,11 +2,12 @@ package com.jaco.tui;
 
 /** raw mode 下的有界输入；整段粘贴及 Shift+Enter 换行不会自动提交，兼容 Alt+Enter。 */
 final class RunningCommandInput {
-    enum Action { NONE, EDITED, SUBMIT, CANCEL }
+    enum Action { NONE, EDITED, SUBMIT, CANCEL, OVERFLOW }
     private final StringBuilder text = new StringBuilder();
     private final StringBuilder escape = new StringBuilder();
     private boolean pasting, previousCr;
     private boolean overflowed;
+    private char pendingHighSurrogate;
     private final int maxLength;
     private final boolean submitEmpty;
 
@@ -16,6 +17,16 @@ final class RunningCommandInput {
     Action accept(int key) {
         if (key == 3) { clear(); return Action.CANCEL; }
         if (key < 0) return Action.NONE;
+        // NonBlockingReader 可能逐个返回 UTF-16 单位，完整字符到齐后再检查容量。
+        if (key <= Character.MAX_VALUE && Character.isHighSurrogate((char) key)) {
+            pendingHighSurrogate = (char) key;
+            return Action.NONE;
+        }
+        if (key <= Character.MAX_VALUE && Character.isLowSurrogate((char) key)) {
+            if (pendingHighSurrogate == 0) return Action.NONE;
+            key = Character.toCodePoint(pendingHighSurrogate, (char) key);
+        }
+        pendingHighSurrogate = 0;
         if (!escape.isEmpty()) {
             if (escape.length() == 1 && (key == '\r' || key == '\n')) {
                 escape.setLength(0);
@@ -56,12 +67,13 @@ final class RunningCommandInput {
             text.appendCodePoint(key);
             return Action.EDITED;
         }
+        if (overflowed) return Action.NONE;
         overflowed = true;
-        return Action.NONE;
+        return Action.OVERFLOW;
     }
 
     String text() { return text.toString(); }
     boolean isEmpty() { return text.isEmpty(); }
     boolean overflowed() { return overflowed; }
-    void clear() { text.setLength(0); escape.setLength(0); pasting = false; previousCr = false; overflowed = false; }
+    void clear() { text.setLength(0); escape.setLength(0); pasting = false; previousCr = false; overflowed = false; pendingHighSurrogate = 0; }
 }

@@ -545,7 +545,7 @@ public final class ConsoleApp {
             if (action == RunningCommandInput.Action.SUBMIT) {
                 clearRunningInput();
                 try {
-                    if (answer.overflowed()) throw new ToolException("答案超过 2000 字符，请缩短后重新输入");
+                    if (answer.overflowed()) throw new ToolException("输入达到上限，部分内容未录入；请退格修改或 Ctrl+U 清空后重新提交");
                     var submission = question.parseInput(request.requestId(), answer.text());
                     var resolved = question.answer(submission);
                     if (!request.active().getAsBoolean() || handle.isCancelled()) return;
@@ -559,6 +559,10 @@ public final class ConsoleApp {
                     println(ANSI_YELLOW + e.getMessage() + ANSI_RESET);
                     drawInput(answer.text(), "回答 ❯ ");
                 }
+            } else if (action == RunningCommandInput.Action.OVERFLOW) {
+                clearRunningInput();
+                println(ANSI_YELLOW + "输入达到上限，部分内容未录入" + ANSI_RESET);
+                drawInput(answer.text(), "回答 ❯ ");
             } else if (action == RunningCommandInput.Action.EDITED) {
                 clearRunningInput();
                 drawInput(answer.text(), "回答 ❯ ");
