@@ -53,6 +53,7 @@ class ConsoleAppRunningCommandTest {
         Function<Object[], String> readLine = args -> { throw new EndOfFileException(); };
         java.util.function.Consumer<String> printAbove = text -> { };
         int reads;
+        int width = 80;
         final NonBlockingReader input = new NonBlockingReader() {
             @Override protected int read(long timeout, boolean peek) {
                 if (keys.isEmpty()) onIdle.run();
@@ -75,7 +76,7 @@ class ConsoleAppRunningCommandTest {
                     case "reader" -> input;
                     case "writer" -> new PrintWriter(output);
                     case "getAttributes", "enterRawMode" -> new Attributes();
-                    case "getWidth" -> 80;
+                    case "getWidth" -> width;
                     case "getType" -> "xterm";
                     default -> null;
                 });
@@ -381,7 +382,7 @@ class ConsoleAppRunningCommandTest {
                     case 0 -> console.type((paste ? "\033[200~" : "") + "x".repeat(2002)
                             + (paste ? "\r\nignored\033[201~" : ""));
                     case 1 -> {
-                        assertEquals(1, console.text().split("输入达到上限，部分内容未录入", -1).length - 1);
+                        assertEquals(paste ? 2 : 1, console.text().split("输入达到上限，部分内容未录入", -1).length - 1);
                         console.type("\r");
                     }
                     case 2 -> console.type("\177\r");
@@ -435,6 +436,58 @@ class ConsoleAppRunningCommandTest {
             var answer = answerQuestion(console, false);
             assertEquals(correction.startsWith("/skip") ? "skipped" : "custom_text", answer.source());
             assertFalse(console.text().contains("已采用推荐项"));
+        }
+    }
+
+    @Test void repeatedErrorsDoNotPrintAgainAndEditingRemovesInlineError() throws Exception {
+        Console console = new Console();
+        AtomicInteger stage = new AtomicInteger(), errorOutputLength = new AtomicInteger();
+        console.onIdle = () -> {
+            if (!console.text().contains("回答 ❯")) return;
+            switch (stage.getAndIncrement()) {
+                case 0 -> console.type("9\r");
+                case 1 -> {
+                    String frame = console.text().substring(console.text().lastIndexOf("\r\033[2K") + 5);
+                    assertTrue(frame.contains("请选择 1～2"));
+                    assertFalse(frame.contains("\n"));
+                    errorOutputLength.set(console.text().length());
+                    console.type("\r\r");
+                }
+                case 2 -> {
+                    assertEquals(errorOutputLength.get(), console.text().length());
+                    console.type("\177");
+                }
+                case 3 -> {
+                    String frame = console.text().substring(console.text().lastIndexOf("\r\033[2K") + 5);
+                    assertFalse(frame.contains("请选择"));
+                    console.type("2\r");
+                }
+            }
+        };
+        assertEquals("json", answerQuestion(console, true).selectedOptionIds().getFirst());
+        assertFalse(console.text().substring(console.text().lastIndexOf("已选择")).contains("请选择"));
+    }
+
+    @Test void inlineErrorsAndLongAnswersFitNarrowTerminalWithoutSplittingUnicode() throws Exception {
+        for (int width : List.of(1, 4, 16, 30, 80)) {
+            Console console = new Console();
+            console.width = width;
+            AtomicInteger stage = new AtomicInteger();
+            console.onIdle = () -> {
+                // 初始运行命令读取后才会展示问题，等待问题正文而非窄屏下省略的输入标签。
+                if (!console.text().contains("配置采用哪种格式")) return;
+                switch (stage.getAndIncrement()) {
+                    case 0 -> console.type("9".repeat(100) + "\r");
+                    case 1 -> {
+                        String frame = console.text().substring(console.text().lastIndexOf("\r\033[2K") + 5)
+                                .replaceAll("\033\\[[0-9;]*m", "");
+                        assertFalse(frame.contains("\n"));
+                        assertTrue(com.jaco.render.DisplayWidth.width(frame) <= Math.max(1, width - 1));
+                        console.type("\025😀\r");
+                    }
+                }
+            };
+            assertEquals("😀", answerQuestion(console, true).customText());
         }
     }
 

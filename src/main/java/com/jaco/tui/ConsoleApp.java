@@ -504,10 +504,27 @@ public final class ConsoleApp {
     }
 
     private void drawInput(String text, String label) {
+        drawInput(text, label, "");
+    }
+
+    private void drawInput(String text, String label, String error) {
         text = text.replace("\n", " ↵ ").replace("\t", "    ");
         int width = terminal.getWidth() > 0 ? terminal.getWidth() : 80;
         String prefix = width >= 16 ? label : width >= 4 ? "> " : "";
-        int available = Math.max(1, width - com.jaco.render.DisplayWidth.width(prefix) - 1);
+        String status = "";
+        int statusBudget = Math.max(0, width - com.jaco.render.DisplayWidth.width(prefix) - 12);
+        if (!error.isEmpty() && statusBudget >= 4) {
+            int end = 0, columns = 0;
+            while (end < error.length()) {
+                int next = error.offsetByCodePoints(end, 1);
+                int size = com.jaco.render.DisplayWidth.width(error.substring(end, next));
+                if (columns + size > statusBudget - 4) break;
+                columns += size;
+                end = next;
+            }
+            status = "[" + error.substring(0, end) + (end < error.length() ? "…" : "") + "] ";
+        }
+        int available = Math.max(1, width - com.jaco.render.DisplayWidth.width(prefix + status) - 1);
         int start = text.length(), used = 0;
         while (start > 0) {
             int previous = text.offsetByCodePoints(start, -1);
@@ -517,7 +534,7 @@ public final class ConsoleApp {
             start = previous;
         }
         String visible = text.substring(start);
-        rawPrint(ANSI_GREEN + prefix + visible + ANSI_RESET);
+        rawPrint((status.isEmpty() ? "" : ANSI_YELLOW + status) + ANSI_GREEN + prefix + visible + ANSI_RESET);
     }
 
     /** 保持 raw mode，用短轮询响应外部取消，不把未作答当成采用推荐项。 */
@@ -536,6 +553,8 @@ public final class ConsoleApp {
         println("╰─ " + (question.recommended() == null ? "输入答案；/skip 跳过" : "输入编号或自定义答案；回车或 /skip 采用 " + question.recommended().label())
                 + "；/text 输入数字文本；Shift+Enter 换行（兼容 Alt+Enter），粘贴后回车提交；Ctrl+C 取消");
         RunningCommandInput answer = new RunningCommandInput(UserQuestion.MAX_ANSWER_LENGTH, true);
+        String error = "";
+        String overflowMessage = "输入达到上限，部分内容未录入；请退格修改或 Ctrl+U 清空后重新提交";
         drawInput("", "回答 ❯ ");
         while (request.active().getAsBoolean() && !handle.isCancelled()) {
             int key = terminal.reader().read(50L);
@@ -543,29 +562,36 @@ public final class ConsoleApp {
             var action = answer.accept(key);
             if (action == RunningCommandInput.Action.CANCEL) { handle.cancel(); break; }
             if (action == RunningCommandInput.Action.SUBMIT) {
-                clearRunningInput();
                 try {
-                    if (answer.overflowed()) throw new ToolException("输入达到上限，部分内容未录入；请退格修改或 Ctrl+U 清空后重新提交");
+                    if (answer.overflowed()) throw new ToolException(overflowMessage);
                     var submission = question.parseInput(request.requestId(), answer.text());
                     var resolved = question.answer(submission);
-                    if (!request.active().getAsBoolean() || handle.isCancelled()) return;
+                    if (!request.active().getAsBoolean() || handle.isCancelled()) {
+                        clearRunningInput();
+                        return;
+                    }
                     request.resolver().accept(submission);
+                    clearRunningInput();
                     if (resolved.source().equals("recommended_default")) println(ANSI_DIM + "已采用推荐项：" + question.recommended().label() + ANSI_RESET);
                     else if (resolved.source().equals("user_selection")) println("已选择：" + question.options().stream()
                             .filter(o -> o.id().equals(resolved.selectedOptionIds().getFirst())).findFirst().orElseThrow().label());
                     else println(resolved.status().equals("skipped") ? "已跳过，未提供答案" : "已回答：" + resolved.customText());
                     return;
                 } catch (ToolException e) {
-                    println(ANSI_YELLOW + e.getMessage() + ANSI_RESET);
-                    drawInput(answer.text(), "回答 ❯ ");
+                    if (!e.getMessage().equals(error)) {
+                        error = e.getMessage();
+                        clearRunningInput();
+                        drawInput(answer.text(), "回答 ❯ ", error);
+                    }
                 }
             } else if (action == RunningCommandInput.Action.OVERFLOW) {
                 clearRunningInput();
-                println(ANSI_YELLOW + "输入达到上限，部分内容未录入" + ANSI_RESET);
-                drawInput(answer.text(), "回答 ❯ ");
+                error = overflowMessage;
+                drawInput(answer.text(), "回答 ❯ ", error);
             } else if (action == RunningCommandInput.Action.EDITED) {
                 clearRunningInput();
-                drawInput(answer.text(), "回答 ❯ ");
+                error = answer.overflowed() ? overflowMessage : "";
+                drawInput(answer.text(), "回答 ❯ ", error);
             }
         }
         clearRunningInput();
