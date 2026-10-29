@@ -557,8 +557,7 @@ public final class ConsoleApp {
                     return;
                 } catch (ToolException e) {
                     println(ANSI_YELLOW + e.getMessage() + ANSI_RESET);
-                    answer.clear();
-                    drawInput("", "回答 ❯ ");
+                    drawInput(answer.text(), "回答 ❯ ");
                 }
             } else if (action == RunningCommandInput.Action.EDITED) {
                 clearRunningInput();

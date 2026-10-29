@@ -319,7 +319,7 @@ class ConsoleAppRunningCommandTest {
     }
 
     @Test void questionUiSupportsDefaultSkipChoiceFreeTextAndInvalidRetry() throws Exception {
-        for (String input : List.of("\r", "/skip\r", "2\r", "自定义\r", "/text 123\r", "9\r2\r")) {
+        for (String input : List.of("\r", "/skip\r", "2\r", "自定义\r", "/text 123\r", "9\r\1772\r")) {
             try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
                 Console console = new Console();
                 AtomicBoolean typed = new AtomicBoolean();
@@ -346,8 +346,33 @@ class ConsoleAppRunningCommandTest {
         }
     }
 
+    @Test void invalidAnswerRemainsVisibleAndCanBeCorrectedWithoutRetyping() throws Exception {
+        try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
+            Console console = new Console();
+            AtomicInteger stage = new AtomicInteger();
+            AtomicReference<com.jaco.tool.UserQuestion.Answer> answer = new AtomicReference<>();
+            console.onIdle = () -> {
+                if (!console.text().contains("回答 ❯") || answer.get() != null) return;
+                if (stage.getAndIncrement() == 0) console.type("9\r");
+                else {
+                    assertNull(answer.get());
+                    assertTrue(console.text().contains("请选择 1～2"));
+                    assertTrue(console.text().contains("回答 ❯ 9"));
+                    console.type("\1772\r");
+                }
+            };
+            var question = question(true);
+            TestTurnEvents.emit(handle, new TurnEvent.QuestionRequest("r", question, s -> {
+                answer.set(question.answer(s));
+                TestTurnEvents.emit(handle, new TurnEvent.Done(null, "stop", false, false, null, 1));
+            }, () -> !handle.isCancelled() && answer.get() == null));
+            assertTimeoutPreemptively(Duration.ofSeconds(3), () -> console.app(agent).consumeTurn(handle));
+            assertEquals("json", answer.get().selectedOptionIds().getFirst());
+        }
+    }
+
     @Test void pureTextRequiresAnswerAndOversizedInputIsNotSilentlyTruncated() throws Exception {
-        for (String input : List.of("\r补充说明\r", "x".repeat(2001) + "\r缩短答案\r", "/skip\r",
+        for (String input : List.of("\r补充说明\r", "x".repeat(2001) + "\r\025缩短答案\r", "/skip\r",
                 "\033[200~第一行\r\n\r\n第二行\033[201~\r", "第一行\033\r第二行\r",
                 "第一行\033[13;2u第二行\r", "第一行\033[27;2;13~第二行\r")) {
             try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
