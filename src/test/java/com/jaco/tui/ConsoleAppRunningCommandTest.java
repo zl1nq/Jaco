@@ -391,6 +391,53 @@ class ConsoleAppRunningCommandTest {
         }
     }
 
+    @Test void invalidRetriesWaitUntilExplicitClearSkipOrCancel() throws Exception {
+        for (String correction : List.of("\025\r", "\025/skip\r", "\003")) {
+            Console console = new Console();
+            AtomicInteger stage = new AtomicInteger();
+            console.onIdle = () -> {
+                if (!console.text().contains("回答 ❯")) return;
+                int step = stage.getAndIncrement();
+                if (step == 0) console.type("9\r\r");
+                else if (step <= 5) {
+                    assertFalse(console.text().contains("已采用推荐项"));
+                    assertFalse(console.text().contains("已选择"));
+                    assertTrue(console.text().contains("请选择 1～2"));
+                } else if (step == 6) console.type(correction);
+            };
+            var answer = answerQuestion(console, true);
+            assertTrue(stage.get() >= 7);
+            if (correction.equals("\003")) {
+                assertNull(answer);
+                assertFalse(console.text().contains("已采用推荐项"));
+            } else {
+                assertEquals("recommended_default", answer.source());
+                assertEquals("yaml", answer.selectedOptionIds().getFirst());
+                assertEquals(correction.contains("/skip") ? "skipped" : "empty_submit", answer.defaultReason());
+            }
+        }
+    }
+
+    @Test void clearingInvalidPureTextAnswerStillRequiresTextOrExplicitSkip() throws Exception {
+        for (String correction : List.of("补充说明\r", "/skip\r")) {
+            Console console = new Console();
+            AtomicInteger stage = new AtomicInteger();
+            console.onIdle = () -> {
+                if (!console.text().contains("回答 ❯")) return;
+                int step = stage.getAndIncrement();
+                if (step == 0) console.type("/text\r\025\r");
+                else if (step == 1) {
+                    assertTrue(console.text().contains("请填写答案"));
+                    assertFalse(console.text().contains("已回答"));
+                    console.type(correction);
+                }
+            };
+            var answer = answerQuestion(console, false);
+            assertEquals(correction.startsWith("/skip") ? "skipped" : "custom_text", answer.source());
+            assertFalse(console.text().contains("已采用推荐项"));
+        }
+    }
+
     private com.jaco.tool.UserQuestion.Answer answerQuestion(Console console, boolean choices) throws Exception {
         try (var agent = agent(null, new ToolRegistry()); TurnHandle handle = new TurnHandle()) {
             var question = question(choices);
