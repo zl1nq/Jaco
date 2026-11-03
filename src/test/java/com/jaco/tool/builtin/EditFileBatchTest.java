@@ -37,7 +37,7 @@ class EditFileBatchTest {
         return args(original).put("old_text", old).put("new_text", updated);
     }
     private PreparedToolCall prepare(ObjectNode args) throws Exception { return tool.prepare(args, context(() -> false)); }
-    private void edit(ObjectNode args) throws Exception { prepare(args).execute(); }
+    private void edit(ObjectNode args) throws Exception { prepare(args).execute().text(); }
     private void noTemps() throws Exception {
         try (var files = Files.list(tmp)) { assertFalse(files.anyMatch(p -> p.getFileName().toString().startsWith(".jaco-write-"))); }
     }
@@ -84,7 +84,7 @@ class EditFileBatchTest {
         edits.addObject().put("old_text", "second").put("new_text", "last");
         var plan = prepare(args);
         assertEquals("first second", Files.readString(file()));
-        String result = plan.execute();
+        String result = plan.execute().text();
         assertEquals("second last", Files.readString(file()));
         assertTrue(result.contains(FileVersion.of(Files.readAllBytes(file()))));
         assertTrue(plan.preview().contains("first second"));
@@ -239,7 +239,7 @@ class EditFileBatchTest {
     @Test void unchangedBatchDoesNotRewriteAndNoNewlineFileDefaultsToLf() throws Exception {
         ObjectNode args = single("old", "old", "old").put("newline_mode", "preserve");
         var time = Files.getLastModifiedTime(file());
-        assertTrue(prepare(args).execute().startsWith("无需修改"));
+        assertTrue(prepare(args).execute().text().startsWith("无需修改"));
         assertEquals(time, Files.getLastModifiedTime(file()));
         edit(args.put("new_text", "new\r\nline"));
         assertEquals("new\nline", Files.readString(file()));
@@ -252,7 +252,7 @@ class EditFileBatchTest {
         assertTrue(plan.preview().length() < 8000);
         assertFalse(plan.preview().contains("\u001b"));
         assertTrue(plan.preview().contains("预览已截短"));
-        plan.execute();
+        plan.execute().text();
         assertEquals("\u001b[2J\n".repeat(200), Files.readString(file()));
         String control = prepare(single("old", "old", "\u001b[2J")).preview();
         assertFalse(control.contains("\u001b"));
@@ -266,7 +266,7 @@ class EditFileBatchTest {
         assertTrue(plan.preview().contains("+ -:2 | Ab"), plan.preview());
         assertTrue(plan.preview().contains("4:3 | tail"), plan.preview());
         assertFalse(plan.preview().contains("[无末尾换行]"), plan.preview());
-        plan.execute();
+        plan.execute().text();
         assertEquals("head\nAb\ntail\n", Files.readString(file()));
     }
 }

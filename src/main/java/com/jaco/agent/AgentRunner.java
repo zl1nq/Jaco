@@ -534,10 +534,10 @@ public final class AgentRunner implements AutoCloseable {
 
     /** 同步兼容入口；生命周期及资源均交由管理器持有。 */
     public String runSubagent(String prompt, BooleanSupplier cancelled) {
-        return runSubagent(new SubagentRequest(prompt), cancelled);
+        return runSubagent(new SubagentRequest(prompt), cancelled).text();
     }
 
-    public String runSubagent(SubagentRequest request, BooleanSupplier cancelled) {
+    public com.jaco.tool.ToolResult runSubagent(SubagentRequest request, BooleanSupplier cancelled) {
         return runManagedSubagent(request, cancelled);
     }
 
@@ -607,13 +607,13 @@ public final class AgentRunner implements AutoCloseable {
         return text.isEmpty() ? "（当前会话暂无子任务）" : text.toString().stripTrailing();
     }
 
-    private String runManagedSubagent(SubagentRequest request, BooleanSupplier cancelled) {
+    private com.jaco.tool.ToolResult runManagedSubagent(SubagentRequest request, BooleanSupplier cancelled) {
         String prompt = request.prompt();
         TurnHandle parent = currentTurn.get();
         String sessionId = parent == null ? session.id() : currentSessionId.get();
         String turnId = parent == null ? UUID.randomUUID().toString() : parent.id();
         BooleanSupplier stopped = () -> cancelled.getAsBoolean() || (parent != null && parent.isCancelled());
-        if (request.runInBackground() && stopped.getAsBoolean()) return "子任务被中断，未启动";
+        if (request.runInBackground() && stopped.getAsBoolean()) return com.jaco.tool.ToolResult.cancelled("子任务被中断，未启动");
         SubagentSpec spec = new SubagentSpec(sessionId, turnId, prompt, subagentTimeout, subagentMaxIterations,
                 request.profile(), request.tools(), request.runInBackground());
         TurnEventSink sink = request.runInBackground() ? null : TurnEventSink.current();
@@ -622,7 +622,7 @@ public final class AgentRunner implements AutoCloseable {
             child = subagents.start(spec, request.runInBackground() ? () -> false : stopped,
                     control -> subagentRunner.run(control, sink));
         } catch (IllegalStateException e) {
-            return "子任务失败: " + e.getMessage();
+            return com.jaco.tool.ToolResult.failure("子任务失败: " + e.getMessage());
         }
         if (request.runInBackground()) {
             child.onComplete(result -> {
@@ -636,8 +636,8 @@ public final class AgentRunner implements AutoCloseable {
                     backgroundNotices.offer(notice);
                 }
             });
-            return "后台子任务已启动: " + child.id() + " / profile=" + request.profile().id()
-                    + " / " + child.snapshot().state() + "。完成后通知；用 task_status 查询结果，task_cancel 取消。";
+            return com.jaco.tool.ToolResult.success("后台子任务已启动: " + child.id() + " / profile=" + request.profile().id()
+                    + " / " + child.snapshot().state() + "。完成后通知；用 task_status 查询结果，task_cancel 取消。");
         }
         if (sink != null && !stopped.getAsBoolean()) {
             sink.emit(new TurnEvent.Notice("⟣ 子任务开始: " + unicodePrefix(prompt.replace('\n', ' ').strip(), 50)
@@ -655,7 +655,7 @@ public final class AgentRunner implements AutoCloseable {
                 try {
                     SubagentResult result = child.await(Duration.ofMillis(100));
                     emitSubagentEnd(sink, stopped, sessionId, result);
-                    return result.toToolResult();
+                    return result.executionResult();
                 } catch (TimeoutException ignored) { }
             }
         } catch (InterruptedException e) {
@@ -670,12 +670,12 @@ public final class AgentRunner implements AutoCloseable {
                 try {
                     var result = child.await(Duration.ofNanos(remaining));
                     emitSubagentEnd(sink, stopped, sessionId, result);
-                    return result.toToolResult();
+                    return result.executionResult();
                 } catch (InterruptedException e) {
                     interrupted = true;
                 } catch (TimeoutException e) { break; }
             }
-            return "子任务仍在取消中（ID: " + child.id() + "），尚未确认退出";
+            return com.jaco.tool.ToolResult.cancelled("子任务仍在取消中（ID: " + child.id() + "），尚未确认退出");
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
         }

@@ -68,16 +68,16 @@ class BackgroundProcessManagerTest {
     }
 
     private String start(ObjectNode args, ToolContext ctx) throws Exception {
-        return field(new ProcessStartTool(manager).execute(args, ctx), "task_id");
+        return field(new ProcessStartTool(manager).execute(args, ctx).text(), "task_id");
     }
 
     private String poll(String id, long offset, int wait, ToolContext ctx) throws Exception {
         return new ProcessPollTool(manager).execute(MAPPER.createObjectNode().put("task_id", id)
-                .put("offset", offset).put("wait_ms", wait), ctx);
+                .put("offset", offset).put("wait_ms", wait), ctx).text();
     }
 
     private String stop(String id, ToolContext ctx) throws Exception {
-        return new ProcessStopTool(manager).execute(MAPPER.createObjectNode().put("task_id", id), ctx);
+        return new ProcessStopTool(manager).execute(MAPPER.createObjectNode().put("task_id", id), ctx).text();
     }
 
     private String field(String out, String name) {
@@ -135,7 +135,7 @@ class BackgroundProcessManagerTest {
         String stopped = stop(id, ctx);
         assertEquals("exited", field(stopped, "status"));
         assertEquals("7", field(stopped, "exit_code"));
-        assertTrue(new ProcessPollTool(manager).execute(MAPPER.createObjectNode(), ctx).contains(id));
+        assertTrue(new ProcessPollTool(manager).execute(MAPPER.createObjectNode(), ctx).text().contains(id));
         assertTrue(Files.readString(ctx.archiveFile()).contains("STDOUT"), "小日志也应归档");
     }
 
@@ -209,7 +209,7 @@ class BackgroundProcessManagerTest {
         String evicted = first;
         assertThrows(ToolException.class, () -> poll(evicted, 0, 0, ctx));
         assertEquals("exited", field(poll(last, 0, 0, ctx), "status"));
-        String listing = new ProcessPollTool(manager).execute(MAPPER.createObjectNode(), ctx);
+        String listing = new ProcessPollTool(manager).execute(MAPPER.createObjectNode(), ctx).text();
         assertEquals(32, listing.lines().count());
     }
 
@@ -246,7 +246,7 @@ class BackgroundProcessManagerTest {
         assertThrows(ToolException.class, prepared::execute);
         assertThrows(ToolException.class, () -> poll(id, 0, 0, ctx));
         ToolContext next = context(store.archivePath(agent.session()), new AtomicBoolean(), 8000);
-        assertTrue(new ProcessPollTool(manager).execute(MAPPER.createObjectNode(), next).contains("没有后台任务"));
+        assertTrue(new ProcessPollTool(manager).execute(MAPPER.createObjectNode(), next).text().contains("没有后台任务"));
     }
 
     @Test
@@ -280,7 +280,7 @@ class BackgroundProcessManagerTest {
         assertThrows(ToolException.class, () -> new ProcessStopTool(manager).prepare(MAPPER.createObjectNode(), ctx()));
         var prepared = start.prepare(command("wait"), ctx());
         assertNotNull(prepared);
-        assertTrue(new ProcessPollTool(manager).execute(MAPPER.createObjectNode(), ctx()).contains("没有后台任务"));
+        assertTrue(new ProcessPollTool(manager).execute(MAPPER.createObjectNode(), ctx()).text().contains("没有后台任务"));
     }
 
     @Test

@@ -41,7 +41,7 @@ class AskUserQuestionTest {
         Pending(JsonNode args) {
             worker = Thread.ofVirtual().unstarted(() -> {
                 TurnEventSink.install(handle);
-                try { result.complete(tool.execute(args, ctx(handle))); }
+                try { result.complete(tool.execute(args, ctx(handle)).text()); }
                 catch (Exception e) { result.completeExceptionally(e); }
                 finally { TurnEventSink.clear(); }
             });
@@ -158,7 +158,7 @@ class AskUserQuestionTest {
 
     @Test void unavailableNeverAdoptsDefaultsAndPermissionIsNotRequested() throws Exception {
         var tool = new AskUserQuestionTool();
-        String result = tool.execute(args(), ctx(new TurnHandle()));
+        String result = tool.execute(args(), ctx(new TurnHandle())).text();
         assertEquals("unavailable", JSON.readTree(result).path("status").asText());
         assertTrue(JSON.readTree(result).path("answers").isEmpty());
         assertTrue(new PermissionHook().onBeforeToolCall(new ToolCall("c", "function",
@@ -171,7 +171,7 @@ class AskUserQuestionTest {
         TurnHandle handle = new TurnHandle();
         TurnEventSink.install(handle);
         try (var binding = TurnEventSink.bindSubagent(TurnEventSink.current(), "child", () -> false)) {
-            assertThrows(ToolException.class, () -> new AskUserQuestionTool().execute(args(), ctx(handle)));
+            assertThrows(ToolException.class, () -> new AskUserQuestionTool().execute(args(), ctx(handle)).text());
             assertNull(handle.poll(1));
         } finally { TurnEventSink.clear(); }
     }

@@ -40,17 +40,8 @@ public final class ToolCallExecutor {
                         "Permission denied: " + verdict.denyReason());
             }
             check(ctx);
-            String result = prepared.execute();
-            ToolExecution.Status status = result.startsWith("ERROR:") ? ToolExecution.Status.FAILED
-                    : ToolExecution.Status.SUCCEEDED;
-            if (name.equals("task")) {
-                if (result.startsWith("子任务失败:")) status = ToolExecution.Status.FAILED;
-                else if (result.startsWith("(子任务被中断)") || result.startsWith("子任务超时")
-                        || result.startsWith("子任务仍在取消中") || result.startsWith("子任务因应用退出")) {
-                    status = ToolExecution.Status.CANCELLED;
-                }
-            }
-            return new ToolExecution(status, result);
+            ToolResult result = prepared.execute();
+            return new ToolExecution(result.status(), result.text());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new ToolExecution(ToolExecution.Status.CANCELLED, "ERROR: interrupted by user");

@@ -53,7 +53,7 @@ class WebFetchToolTest {
     }
 
     private JsonNode fetch(WebFetchTool tool, ObjectNode args, ToolContext ctx) throws Exception {
-        return MAPPER.readTree(tool.execute(args, ctx));
+        return MAPPER.readTree(tool.execute(args, ctx).text());
     }
 
     @Test
@@ -100,8 +100,8 @@ class WebFetchToolTest {
             } while (true);
             assertEquals(original, restored.toString());
             assertEquals(1, requests.get());
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", id).put("offset", 1), ctx));
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", id).put("limit", 1), ctx));
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", id).put("offset", 1), ctx).text());
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", id).put("limit", 1), ctx).text());
         }
     }
 
@@ -131,7 +131,7 @@ class WebFetchToolTest {
             return new WebHttpTransport.Response(302, "", "/next", new byte[0]);
         }, System::currentTimeMillis, 2000)) {
             ToolException error = assertThrows(ToolException.class,
-                    () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com/start"), ctx()));
+                    () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com/start"), ctx()).text());
             assertTrue(error.getMessage().contains("非公共"));
             assertEquals(1, connections.get());
         }
@@ -141,7 +141,7 @@ class WebFetchToolTest {
                     mixedConnections.incrementAndGet();
                     return response("unsafe", "text/plain");
                 }, System::currentTimeMillis, 2000)) {
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()));
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()).text());
             assertEquals(0, mixedConnections.get());
         }
     }
@@ -150,12 +150,12 @@ class WebFetchToolTest {
     void rejectsHttpsDowngradeRedirectLoopsAndTooManyRedirects() throws Exception {
         for (String target : List.of("http://other.example/page", "https://example.com/start")) {
             try (WebFetchTool tool = tool((url, ips, abort) -> new WebHttpTransport.Response(302, "", target, new byte[0]))) {
-                assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com/start"), ctx()));
+                assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com/start"), ctx()).text());
             }
         }
         AtomicInteger requests = new AtomicInteger();
         try (WebFetchTool tool = tool((url, ips, abort) -> new WebHttpTransport.Response(302, "", "/" + requests.incrementAndGet(), new byte[0]))) {
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com/start"), ctx()));
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com/start"), ctx()).text());
             assertEquals(6, requests.get());
         }
     }
@@ -168,7 +168,7 @@ class WebFetchToolTest {
         }, (url, ips, abort) -> response("never", "text/plain"), System::currentTimeMillis, 150)) {
             long start = System.nanoTime();
             ToolException error = assertThrows(ToolException.class,
-                    () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()));
+                    () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()).text());
             assertTrue(error.getMessage().contains("总时限"));
             assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start) < 1500);
         }
@@ -180,7 +180,7 @@ class WebFetchToolTest {
             return response("never", "text/plain");
         })) {
             CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> {
-                try { return tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), context("session", cancelled, 8000)); }
+                try { return tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), context("session", cancelled, 8000)).text(); }
                 catch (Exception e) { return e.getClass().getSimpleName(); }
             });
             assertTrue(started.await(2, TimeUnit.SECONDS));
@@ -196,12 +196,12 @@ class WebFetchToolTest {
             List<String> ids = new ArrayList<>();
             for (int i = 0; i < 17; i++) ids.add(fetch(tool, MAPPER.createObjectNode().put("url", "https://example.com/" + i), ctx())
                     .path("fetch_id").asText());
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", ids.getFirst()), ctx()));
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", ids.getFirst()), ctx()).text());
             String last = ids.getLast();
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", last), context("other", new AtomicBoolean(), 8000)));
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", last), context("other", new AtomicBoolean(), 8000)).text());
             assertEquals("saved", fetch(tool, MAPPER.createObjectNode().put("fetch_id", last), ctx()).path("content").asText());
             now.addAndGet(TimeUnit.MINUTES.toMillis(15));
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", last), ctx()));
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("fetch_id", last), ctx()).text());
             var prepared = tool.prepare(MAPPER.createObjectNode().put("url", "https://example.com"), ctx());
             tool.onSessionChanged();
             assertThrows(ToolException.class, prepared::execute);
@@ -217,7 +217,7 @@ class WebFetchToolTest {
             return response("never", "text/plain");
         })) {
             CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> {
-                try { return tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()); }
+                try { return tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()).text(); }
                 catch (Exception e) { return "cancelled"; }
             });
             assertTrue(started.await(2, TimeUnit.SECONDS));
@@ -239,11 +239,11 @@ class WebFetchToolTest {
         })) {
             List<CompletableFuture<String>> requests = new ArrayList<>();
             for (int i = 0; i < 4; i++) requests.add(CompletableFuture.supplyAsync(() -> {
-                try { return tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()); }
+                try { return tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()).text(); }
                 catch (Exception e) { throw new RuntimeException(e); }
             }));
             assertTrue(started.await(2, TimeUnit.SECONDS));
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()));
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()).text());
             release.countDown();
             CompletableFuture.allOf(requests.toArray(CompletableFuture[]::new)).get(3, TimeUnit.SECONDS);
         } finally { release.countDown(); }
@@ -252,10 +252,10 @@ class WebFetchToolTest {
     @Test
     void unsupportedContentAndHttpErrorsAreExplicit() throws Exception {
         try (WebFetchTool tool = tool((url, ips, abort) -> response("pdf", "application/pdf"))) {
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()));
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()).text());
         }
         try (WebFetchTool tool = tool((url, ips, abort) -> new WebHttpTransport.Response(404, "text/plain", "", new byte[0]))) {
-            ToolException e = assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()));
+            ToolException e = assertThrows(ToolException.class, () -> tool.execute(MAPPER.createObjectNode().put("url", "https://example.com"), ctx()).text());
             assertTrue(e.getMessage().contains("404"));
         }
     }

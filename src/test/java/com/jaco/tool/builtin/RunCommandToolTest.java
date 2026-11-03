@@ -58,7 +58,7 @@ class RunCommandToolTest {
 
     private String run(String... arguments) throws Exception {
         ToolContext context = ctx();
-        String out = new RunCommandTool().execute(args(arguments), context);
+        String out = new RunCommandTool().execute(args(arguments), context).text();
         assertNull(context.currentProcess().get());
         return out;
     }
@@ -89,16 +89,16 @@ class RunCommandToolTest {
     @Test
     void respectsCwdAndExplicitEncoding() throws Exception {
         Path sub = Files.createDirectory(tmp.resolve("sub"));
-        String out = new RunCommandTool().execute(args("cwd").put("cwd", "sub"), ctx());
+        String out = new RunCommandTool().execute(args("cwd").put("cwd", "sub"), ctx()).text();
         assertTrue(out.contains(sub.toRealPath().toString()), out);
-        out = new RunCommandTool().execute(args("encoding", "GBK").put("encoding", "GBK"), ctx());
+        out = new RunCommandTool().execute(args("encoding", "GBK").put("encoding", "GBK"), ctx()).text();
         assertTrue(out.contains("中文输出"), out);
     }
 
     @Test
     void drainsLargeOutputAndArchivesPrefixWithBoundedSize() throws Exception {
         ToolContext context = ctx();
-        String out = new RunCommandTool().execute(args("large", "2100000"), context);
+        String out = new RunCommandTool().execute(args("large", "2100000"), context).text();
         assertTrue(out.contains("status: exited"), out.substring(0, Math.min(out.length(), 300)));
         assertTrue(out.contains("exit_code: 0"));
         assertTrue(out.contains("output_truncated: true"));
@@ -115,7 +115,7 @@ class RunCommandToolTest {
         }
         assertEquals(CommandOutput.ARCHIVE_LIMIT, stored);
         assertTrue(chunks.getFirst().contains("BEGIN"));
-        String recalled = new RecallTool().execute(MAPPER.createObjectNode().put("query", id), context);
+        String recalled = new RecallTool().execute(MAPPER.createObjectNode().put("query", id), context).text();
         assertTrue(recalled.contains(id));
         assertTrue(recalled.contains("BEGIN"));
     }
@@ -123,7 +123,7 @@ class RunCommandToolTest {
     @Test
     void reportsArchiveFailureWithoutBreakingCommandOutput() throws Exception {
         ToolContext context = ctx(tmp.resolve("missing/archive.jsonl"), new AtomicReference<>(), () -> false);
-        String out = new RunCommandTool().execute(args("large", "100000"), context);
+        String out = new RunCommandTool().execute(args("large", "100000"), context).text();
         assertTrue(out.contains("status: exited"));
         assertTrue(out.contains("输出归档不完整"));
         assertTrue(out.endsWith("END\n"));
@@ -131,7 +131,7 @@ class RunCommandToolTest {
 
     @Test
     void stillDrainsWithoutAnArchive() throws Exception {
-        String out = new RunCommandTool().execute(args("large", "100000"), ctx(null, new AtomicReference<>(), () -> false));
+        String out = new RunCommandTool().execute(args("large", "100000"), ctx(null, new AtomicReference<>(), () -> false)).text();
         assertTrue(out.contains("status: exited"));
         assertTrue(out.contains("无可用输出归档"));
         assertTrue(out.endsWith("END\n"));
@@ -141,7 +141,7 @@ class RunCommandToolTest {
     void timesOutAndTerminatesChildProcess() throws Exception {
         Path pidFile = tmp.resolve("child.pid");
         ToolContext context = ctx();
-        String out = new RunCommandTool().execute(args("spawn", pidFile.toString()).put("timeout_seconds", 2), context);
+        String out = new RunCommandTool().execute(args("spawn", pidFile.toString()).put("timeout_seconds", 2), context).text();
         assertTrue(out.contains("status: timed_out"), out);
         assertTrue(out.contains("exit_code: null"));
         assertNull(context.currentProcess().get());
@@ -156,7 +156,7 @@ class RunCommandToolTest {
         CompletableFuture<String> result = new CompletableFuture<>();
         Thread worker = new Thread(() -> {
             try {
-                result.complete(new RunCommandTool().execute(uncheckedArgs("spawn", pidFile.toString()), context));
+                result.complete(new RunCommandTool().execute(uncheckedArgs("spawn", pidFile.toString()), context).text());
             } catch (Exception e) {
                 result.completeExceptionally(e);
             }
@@ -191,7 +191,7 @@ class RunCommandToolTest {
         CompletableFuture<String> result = new CompletableFuture<>();
         Thread worker = new Thread(() -> {
             try {
-                String out = new RunCommandTool().execute(uncheckedArgs("wait"), context);
+                String out = new RunCommandTool().execute(uncheckedArgs("wait"), context).text();
                 restored.set(Thread.currentThread().isInterrupted());
                 result.complete(out);
             } catch (Exception e) {
@@ -220,7 +220,7 @@ class RunCommandToolTest {
     @Test
     void cancellationBeforeStartDoesNotExecuteCommand() throws Exception {
         AtomicReference<Process> ref = new AtomicReference<>();
-        String out = new RunCommandTool().execute(args("exit"), ctx(null, ref, () -> true));
+        String out = new RunCommandTool().execute(args("exit"), ctx(null, ref, () -> true)).text();
         assertTrue(out.contains("status: cancelled"));
         assertNull(ref.get());
     }
@@ -239,6 +239,16 @@ class RunCommandToolTest {
         var prepared = tool.prepare(args("exit").put("cwd", "sub"), ctx());
         Files.delete(sub);
         assertThrows(ToolException.class, prepared::execute);
+    }
+
+    @Test void returnsExplicitCommandStatus() throws Exception {
+        var tool = new RunCommandTool();
+        assertEquals(com.jaco.tool.ToolExecution.Status.FAILED, tool.execute(args("exit"), ctx()).status());
+        assertEquals(com.jaco.tool.ToolExecution.Status.SUCCEEDED, tool.execute(args("stdin"), ctx()).status());
+        assertEquals(com.jaco.tool.ToolExecution.Status.FAILED,
+                tool.execute(args("wait").put("timeout_seconds", 1), ctx()).status());
+        assertEquals(com.jaco.tool.ToolExecution.Status.CANCELLED,
+                tool.execute(args("exit"), ctx(null, new AtomicReference<>(), () -> true)).status());
     }
 
     private void waitForFile(Path file) throws Exception {

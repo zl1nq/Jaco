@@ -270,7 +270,7 @@ class AgentRunnerSubagentEditTest {
 
     @Test void noUiChannelDeniesStandaloneEditEvenWithNoOuterTaskApproval() throws Exception {
         try (var f = new Fixture("write_file", "edit", null, null, false, null)) {
-            f.agent.runSubagent(new SubagentRequest("修改", SubagentProfile.EDIT, null), () -> false);
+            f.agent.runSubagent(new SubagentRequest("修改", SubagentProfile.EDIT, null), () -> false).text();
             assertEquals("old", Files.readString(f.file));
             assertEquals("DENIED", f.completed().path("status").asText());
             assertTrue(f.completed().path("result").asText().contains("没有可用的确认渠道"));

@@ -34,13 +34,13 @@ class RecallToolTest {
 
     @Test
     void emptyArchiveReturnsHint() throws Exception {
-        String out = new RecallTool().execute(MAPPER.createObjectNode(), ctx(null));
+        String out = new RecallTool().execute(MAPPER.createObjectNode(), ctx(null)).text();
         assertTrue(out.contains("归档为空"));
     }
 
     @Test
     void missingArchiveReturnsHint() throws Exception {
-        String out = new RecallTool().execute(MAPPER.createObjectNode(), ctx(tmp.resolve("nope.jsonl")));
+        String out = new RecallTool().execute(MAPPER.createObjectNode(), ctx(tmp.resolve("nope.jsonl"))).text();
         assertTrue(out.contains("归档为空"));
     }
 
@@ -50,7 +50,7 @@ class RecallToolTest {
                 MAPPER.writeValueAsString(java.util.Map.of("archived", "tool_output", "content", "命令输出 ABC")),
                 MAPPER.writeValueAsString(MAPPER.readTree(
                         "{\"role\":\"user\",\"content\":\"早前的用户消息\"}")));
-        String out = new RecallTool().execute(MAPPER.createObjectNode(), ctx(archive));
+        String out = new RecallTool().execute(MAPPER.createObjectNode(), ctx(archive)).text();
         assertTrue(out.contains("[#0] (tool_output) 命令输出 ABC"));
         assertTrue(out.contains("[#1] (user) 早前的用户消息"));
         assertTrue(out.contains("归档共 2 条"));
@@ -64,7 +64,7 @@ class RecallToolTest {
                         "{\"role\":\"assistant\",\"content\":\"另一条消息\"}")));
         var args = MAPPER.createObjectNode();
         args.put("query", "mvn");
-        String out = new RecallTool().execute(args, ctx(archive));
+        String out = new RecallTool().execute(args, ctx(archive)).text();
         assertTrue(out.contains("mvn test 输出"));
         assertFalse(out.contains("另一条消息"));
         assertEquals("命中 1 / 归档共 2 条", out.split("\n")[0].split("，")[0]);
@@ -79,7 +79,7 @@ class RecallToolTest {
         var args = MAPPER.createObjectNode();
         args.put("offset", 1);
         args.put("limit", 1);
-        String out = new RecallTool().execute(args, ctx(archive));
+        String out = new RecallTool().execute(args, ctx(archive)).text();
         assertTrue(out.contains("[#1] (tool_output) 条目1"));
         assertFalse(out.contains("条目0"));
         assertTrue(out.contains("翻页"));
@@ -92,7 +92,7 @@ class RecallToolTest {
         var args = MAPPER.createObjectNode();
         args.put("query", "[invalid");
         assertThrows(com.jaco.tool.ToolException.class,
-                () -> new RecallTool().execute(args, ctx(archive)));
+                () -> new RecallTool().execute(args, ctx(archive)).text());
     }
 
     @Test
@@ -100,7 +100,7 @@ class RecallToolTest {
         String big = "x".repeat(5000);
         Path archive = writeArchive(
                 MAPPER.writeValueAsString(java.util.Map.of("archived", "tool_output", "content", big)));
-        String out = new RecallTool().execute(MAPPER.createObjectNode(), ctx(archive));
+        String out = new RecallTool().execute(MAPPER.createObjectNode(), ctx(archive)).text();
         assertTrue(out.contains("共 5000 字符"));
         assertFalse(out.contains("x".repeat(2000)));
     }
@@ -111,14 +111,14 @@ class RecallToolTest {
                 MAPPER.writeValueAsString(java.util.Map.of("content", "unrelated")),
                 MAPPER.writeValueAsString(java.util.Map.of("content", "x".repeat(5000) + "LATE_MATCH\nlast line")));
         RecallTool tool = new RecallTool();
-        String search = tool.execute(MAPPER.createObjectNode().put("query", "LATE_MATCH"), ctx(archive));
+        String search = tool.execute(MAPPER.createObjectNode().put("query", "LATE_MATCH"), ctx(archive)).text();
         assertTrue(search.contains("LATE_MATCH"));
         assertTrue(search.contains("[#1]"));
         assertTrue(search.contains("entry_id=1"));
         assertTrue(search.contains("content_offset=4880"));
 
         String read = tool.execute(MAPPER.createObjectNode().put("entry_id", 1)
-                .put("content_offset", 5000), ctx(archive));
+                .put("content_offset", 5000), ctx(archive)).text();
         assertTrue(read.contains("LATE_MATCH\nlast line"));
     }
 
@@ -132,7 +132,7 @@ class RecallToolTest {
         int pageSize = 137;
         while (offset < original.length()) {
             String out = tool.execute(MAPPER.createObjectNode().put("entry_id", 0)
-                    .put("content_offset", offset).put("content_limit", pageSize), ctx(archive));
+                    .put("content_offset", offset).put("content_limit", pageSize), ctx(archive)).text();
             var range = java.util.regex.Pattern.compile("本次读取 \\[\\d+, (\\d+)\\)").matcher(out);
             assertTrue(range.find());
             int end = Integer.parseInt(range.group(1));
@@ -156,13 +156,13 @@ class RecallToolTest {
     void contentReadHandlesMissingEmptyAndEndOffsets() throws Exception {
         Path archive = writeArchive("{\"content\":\"abc\"}", "{\"content\":\"\"}");
         RecallTool tool = new RecallTool();
-        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 2), ctx(archive))
+        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 2), ctx(archive)).text()
                 .contains("entry_id 2 超出范围"));
         assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 0)
-                .put("content_offset", 4), ctx(archive)).contains("content_offset 4 超出范围"));
+                .put("content_offset", 4), ctx(archive)).text().contains("content_offset 4 超出范围"));
         assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 0)
-                .put("content_offset", 3), ctx(archive)).contains("本次读取 [3, 3)\n\n已到条目末尾"));
-        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 1), ctx(archive))
+                .put("content_offset", 3), ctx(archive)).text().contains("本次读取 [3, 3)\n\n已到条目末尾"));
+        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 1), ctx(archive)).text()
                 .contains("本次读取 [0, 0)\n\n已到条目末尾"));
     }
 
@@ -177,7 +177,7 @@ class RecallToolTest {
                 "{\"entry_id\":0,\"query\":\"abc\"}", "{\"entry_id\":0,\"offset\":1}",
                 "{\"entry_id\":0,\"limit\":1}", "{\"content_offset\":1200}")) {
             assertThrows(com.jaco.tool.ToolException.class,
-                    () -> tool.execute(MAPPER.readTree(json), ctx(archive)), json);
+                    () -> tool.execute(MAPPER.readTree(json), ctx(archive)).text(), json);
         }
     }
 
@@ -186,14 +186,14 @@ class RecallToolTest {
         Path archive = writeArchive(MAPPER.writeValueAsString(java.util.Map.of("content", "a😀b")));
         RecallTool tool = new RecallTool();
         String page = tool.execute(MAPPER.createObjectNode().put("entry_id", 0)
-                .put("content_limit", 2), ctx(archive));
+                .put("content_limit", 2), ctx(archive)).text();
         assertTrue(page.contains("本次读取 [0, 1)\na\n"));
         assertTrue(page.contains("content_offset=1"));
         assertThrows(com.jaco.tool.ToolException.class, () -> tool.execute(
-                MAPPER.createObjectNode().put("entry_id", 0).put("content_offset", 2), ctx(archive)));
+                MAPPER.createObjectNode().put("entry_id", 0).put("content_offset", 2), ctx(archive)).text());
         assertThrows(com.jaco.tool.ToolException.class, () -> tool.execute(
                 MAPPER.createObjectNode().put("entry_id", 0).put("content_offset", 1)
-                        .put("content_limit", 1), ctx(archive)));
+                        .put("content_limit", 1), ctx(archive)).text());
     }
 
     @Test
@@ -204,16 +204,16 @@ class RecallToolTest {
         ToolContext smallBudget = new ToolContext(tmp, null, "auto", null, () -> false, archive, 1000);
         RecallTool tool = new RecallTool();
         String read = tool.execute(MAPPER.createObjectNode().put("entry_id", 0)
-                .put("content_limit", Integer.MAX_VALUE), smallBudget);
+                .put("content_limit", Integer.MAX_VALUE), smallBudget).text();
         assertTrue(read.length() <= 1000);
         assertTrue(read.contains("本次读取 [0, 600)"));
         assertTrue(read.contains("content_offset=600"));
-        String search = tool.execute(MAPPER.createObjectNode(), smallBudget);
+        String search = tool.execute(MAPPER.createObjectNode(), smallBudget).text();
         assertTrue(search.length() <= 1000);
         assertTrue(search.contains("[#0]"));
         assertFalse(search.contains("[#1]"));
         assertTrue(search.contains("用 offset=1 翻页"));
-        String next = tool.execute(MAPPER.createObjectNode().put("offset", 1), smallBudget);
+        String next = tool.execute(MAPPER.createObjectNode().put("offset", 1), smallBudget).text();
         assertTrue(next.contains("[#1]"));
         assertTrue(next.length() <= 1000);
     }
@@ -223,9 +223,9 @@ class RecallToolTest {
         Path archive = writeArchive("bad json", "", "null", "{\"content\":\"first\"}",
                 "{\"content\":\"second\"}");
         RecallTool tool = new RecallTool();
-        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 1), ctx(archive)).contains("\nsecond\n"));
+        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 1), ctx(archive)).text().contains("\nsecond\n"));
         Files.writeString(archive, "{\"content\":\"third\"}\n", java.nio.file.StandardOpenOption.APPEND);
-        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 1), ctx(archive)).contains("\nsecond\n"));
-        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 2), ctx(archive)).contains("\nthird\n"));
+        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 1), ctx(archive)).text().contains("\nsecond\n"));
+        assertTrue(tool.execute(MAPPER.createObjectNode().put("entry_id", 2), ctx(archive)).text().contains("\nthird\n"));
     }
 }

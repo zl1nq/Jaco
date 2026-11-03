@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -117,13 +119,13 @@ public final class WebFetchTool implements Tool, AgentHook, AutoCloseable {
             ensureOpen();
             expected = generation;
         }
-        if (url == null) return new PreparedToolCall(null, () -> page(snapshot(id, owner), offset, limit, ctx));
+        if (url == null) return PreparedToolCall.text(null, () -> page(snapshot(id, owner), offset, limit, ctx));
         URI uri = WebUrlPolicy.parse(url);
-        return new PreparedToolCall(null, () -> page(fetch(uri, owner, expected, ctx), offset, limit, ctx));
+        return PreparedToolCall.text(null, () -> page(fetch(uri, owner, expected, ctx), offset, limit, ctx));
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) throws Exception {
+    public ToolResult execute(JsonNode args, ToolContext ctx) throws Exception {
         return prepare(args, ctx).execute();
     }
 

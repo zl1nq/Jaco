@@ -74,7 +74,7 @@ class ToolSandboxTest {
         var args = new ObjectMapper().createObjectNode()
                 .put("path", "a/b/c.txt").put("content", "new content");
         new WriteFileTool().execute(args,
-                new ToolContext(root, sandbox, "auto", new AtomicReference<>(), () -> false, null));
+                new ToolContext(root, sandbox, "auto", new AtomicReference<>(), () -> false, null)).text();
 
         assertEquals("new content", Files.readString(root.resolve("a/b/c.txt")));
         assertEquals("keep", Files.readString(root.resolve("c.txt")));

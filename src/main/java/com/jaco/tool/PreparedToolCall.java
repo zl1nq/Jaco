@@ -4,10 +4,15 @@ package com.jaco.tool;
 public record PreparedToolCall(String preview, Action action) {
     @FunctionalInterface
     public interface Action {
-        String execute() throws Exception;
+        ToolResult execute() throws Exception;
     }
 
-    public String execute() throws Exception {
+    @FunctionalInterface
+    public interface TextAction { String execute() throws Exception; }
+    public static PreparedToolCall text(String preview, TextAction action) {
+        return new PreparedToolCall(preview, () -> ToolResult.success(action.execute()));
+    }
+    public ToolResult execute() throws Exception {
         return action.execute();
     }
 }

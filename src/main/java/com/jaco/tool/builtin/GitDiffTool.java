@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jaco.tool.JsonSchema;
@@ -52,7 +54,7 @@ public final class GitDiffTool implements Tool {
         int context = (int) CommandArguments.number(args, "context_lines", 3, 0, 20);
         int max = (int) CommandArguments.number(args, "max_chars", 8000, 1000, 50000);
         JsonNode snapshot = args.deepCopy();
-        return new PreparedToolCall(null, () -> {
+        return PreparedToolCall.text(null, () -> {
             Path root = git.root(directory, ctx);
             List<String> command = new ArrayList<>(List.of("diff", "--no-ext-diff", "--no-textconv", "--no-color",
                     "--no-relative", "--ignore-submodules=all", "--src-prefix=a/", "--dst-prefix=b/", "--unified=" + context));
@@ -76,7 +78,7 @@ public final class GitDiffTool implements Tool {
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) throws Exception {
+    public ToolResult execute(JsonNode args, ToolContext ctx) throws Exception {
         return prepare(args, ctx).execute();
     }
 }

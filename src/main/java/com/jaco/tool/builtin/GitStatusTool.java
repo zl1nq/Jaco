@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -57,7 +59,7 @@ public final class GitStatusTool implements Tool {
         boolean untracked = git.bool(args, "include_untracked", true);
         int max = (int) CommandArguments.number(args, "max_entries", 200, 1, 1000);
         JsonNode snapshot = args.deepCopy();
-        return new PreparedToolCall(null, () -> {
+        return PreparedToolCall.text(null, () -> {
             Path root = git.root(directory, ctx);
             List<String> command = new ArrayList<>(List.of("status", "--porcelain=v1", "-z", "--branch",
                     "--ignore-submodules=all", untracked ? "--untracked-files=all" : "--untracked-files=no", "--"));
@@ -128,7 +130,7 @@ public final class GitStatusTool implements Tool {
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) throws Exception {
+    public ToolResult execute(JsonNode args, ToolContext ctx) throws Exception {
         return prepare(args, ctx).execute();
     }
 }

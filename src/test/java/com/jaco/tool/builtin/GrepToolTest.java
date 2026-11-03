@@ -35,7 +35,7 @@ class GrepToolTest {
     }
 
     private String grep(ObjectNode args) throws Exception {
-        return new GrepTool().execute(args, ctx(() -> false));
+        return new GrepTool().execute(args, ctx(() -> false)).text();
     }
 
     private ObjectNode args(String pattern) {
@@ -108,12 +108,12 @@ class GrepToolTest {
         AtomicInteger checks = new AtomicInteger();
         ToolContext context = ctx(() -> checks.incrementAndGet() > 30);
         assertTimeout(Duration.ofSeconds(5), () -> {
-            String out = new GrepTool().execute(args("hit").put("max_results", 1), context);
+            String out = new GrepTool().execute(args("hit").put("max_results", 1), context).text();
             assertTrue(out.contains("搜索提前停止"));
         });
         checks.set(0);
         ToolException e = assertThrows(ToolException.class,
-                () -> new GrepTool().execute(args("absent"), context));
+                () -> new GrepTool().execute(args("absent"), context).text());
         assertTrue(e.getMessage().contains("取消"));
     }
 
@@ -144,7 +144,7 @@ class GrepToolTest {
                 "{\"pattern\":\"x\",\"max_results\":0}", "{\"pattern\":\"x\",\"context_lines\":11}",
                 "{\"pattern\":\"x\",\"exclude\":\"target\"}", "{\"pattern\":\"x\",\"include\":\"[\"}",
                 "{\"pattern\":\"x\",\"path\":\"missing\"}", "{\"pattern\":\"x\",\"unknown\":1}")) {
-            assertThrows(ToolException.class, () -> new GrepTool().execute(MAPPER.readTree(json), ctx(() -> false)), json);
+            assertThrows(ToolException.class, () -> new GrepTool().execute(MAPPER.readTree(json), ctx(() -> false)).text(), json);
         }
     }
 
@@ -166,7 +166,7 @@ class GrepToolTest {
         }
         ToolContext context = new ToolContext(workspace, new ToolSandbox(workspace, List.of()),
                 "auto", null, () -> false, null);
-        String out = new GrepTool().execute(args("SECRET"), context);
+        String out = new GrepTool().execute(args("SECRET"), context).text();
         assertTrue(out.startsWith("(no matches)"));
         assertTrue(out.contains("符号链接"));
         assertFalse(out.contains("SECRET"));

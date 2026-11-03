@@ -143,7 +143,7 @@ class AgentRunnerFilePreviewTest {
         Files.writeString(tmp.resolve("code.txt"), "old");
         String read = new com.jaco.tool.builtin.ReadFileTool().execute(
                 new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("path", "code.txt"),
-                new com.jaco.tool.ToolContext(tmp, new ToolSandbox(tmp, List.of()), "auto", null, () -> false, null));
+                new com.jaco.tool.ToolContext(tmp, new ToolSandbox(tmp, List.of()), "auto", null, () -> false, null)).text();
         String version = read.split("\n", 2)[0].substring("文件版本: ".length());
         Files.writeString(tmp.resolve("code.txt"), "old plus user change");
         var events = turn(runner("edit_file", version), request -> fail("旧版本不应进入权限确认"));

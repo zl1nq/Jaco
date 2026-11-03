@@ -50,7 +50,7 @@ public final class ToolRegistry {
     }
 
     /** 执行工具；未知工具/参数非法抛 ToolException。 */
-    public String execute(ToolCall call, ToolContext ctx) throws Exception {
+    public ToolResult execute(ToolCall call, ToolContext ctx) throws Exception {
         return prepare(call, ctx).execute();
     }
 

@@ -29,7 +29,7 @@ class FilePreviewTest {
         assertTrue(plan.preview().contains("[新建]"));
         assertTrue(plan.preview().contains("新增 2 行，删除 0 行"));
         assertTrue(plan.preview().contains("+ -:1 | first"));
-        plan.execute();
+        plan.execute().text();
         assertEquals("first\nsecond\n", Files.readString(tmp.resolve("a/b/new.txt")));
     }
 

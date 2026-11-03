@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jaco.tool.JsonSchema;
@@ -66,7 +68,11 @@ public final class RecallTool implements Tool {
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) throws IOException {
+    public ToolResult execute(JsonNode args, ToolContext ctx) throws IOException {
+        return ToolResult.success(executeText(args, ctx));
+    }
+
+    private String executeText(JsonNode args, ToolContext ctx) throws IOException {
         boolean reading = args.has("entry_id");
         int id = reading ? nonNegativeInt(args, "entry_id", 0) : -1;
         int contentOffset = reading ? nonNegativeInt(args, "content_offset", 0) : 0;

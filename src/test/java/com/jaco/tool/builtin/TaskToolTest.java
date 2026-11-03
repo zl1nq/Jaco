@@ -28,7 +28,7 @@ class TaskToolTest {
     void unboundHandlerFailsGracefully() throws Exception {
         var args = MAPPER.createObjectNode();
         args.put("prompt", "调研一下");
-        String out = new TaskTool().execute(args, ctx());
+        String out = new TaskTool().execute(args, ctx()).text();
         assertEquals("ERROR: 子 agent 未接线", out);
     }
 
@@ -38,11 +38,11 @@ class TaskToolTest {
         AtomicReference<String> received = new AtomicReference<>();
         tool.bind((request, cancelled) -> {
             received.set(request.prompt());
-            return "报告内容";
+            return com.jaco.tool.ToolResult.success("报告内容");
         });
         var args = MAPPER.createObjectNode();
         args.put("prompt", "调研一下");
-        assertEquals("报告内容", tool.execute(args, ctx()));
+        assertEquals("报告内容", tool.execute(args, ctx()).text());
         assertEquals("调研一下", received.get());
     }
 
@@ -50,10 +50,10 @@ class TaskToolTest {
     void profileAndToolSubsetAreValidatedAndForwardedAsImmutableRequest() throws Exception {
         TaskTool tool = new TaskTool();
         AtomicReference<SubagentRequest> received = new AtomicReference<>();
-        tool.bind((request, cancelled) -> { received.set(request); return "报告"; });
+        tool.bind((request, cancelled) -> { received.set(request); return com.jaco.tool.ToolResult.success("报告"); });
         assertEquals("报告", tool.execute(MAPPER.readTree("""
                 {"prompt":" 调研一下 ","profile":"explore","tools":["grep","read_file","grep"]}
-                """), ctx()));
+                """), ctx()).text());
         assertEquals("调研一下", received.get().prompt());
         assertEquals(SubagentProfile.EXPLORE, received.get().profile());
         assertEquals(Set.of("grep", "read_file"), received.get().tools());
@@ -64,11 +64,11 @@ class TaskToolTest {
     void omittedToolsUseDefaultsAndExplicitEmptyArrayDisablesTools() throws Exception {
         TaskTool tool = new TaskTool();
         AtomicReference<SubagentRequest> received = new AtomicReference<>();
-        tool.bind((request, cancelled) -> { received.set(request); return "报告"; });
-        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\"}"), ctx());
+        tool.bind((request, cancelled) -> { received.set(request); return com.jaco.tool.ToolResult.success("报告"); });
+        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\"}"), ctx()).text();
         assertEquals(SubagentProfile.EXPLORE, received.get().profile());
         assertEquals(Set.of("read_file", "list_dir", "grep", "find_files", "recall", "git_status", "git_diff"), received.get().tools());
-        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\",\"tools\":[]}"), ctx());
+        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\",\"tools\":[]}"), ctx()).text();
         assertTrue(received.get().tools().isEmpty());
     }
 
@@ -76,7 +76,7 @@ class TaskToolTest {
     void invalidSelectionsNeverReachHandler() throws Exception {
         TaskTool tool = new TaskTool();
         AtomicInteger calls = new AtomicInteger();
-        tool.bind((request, cancelled) -> { calls.incrementAndGet(); return "不应执行"; });
+        tool.bind((request, cancelled) -> { calls.incrementAndGet(); return com.jaco.tool.ToolResult.success("不应执行"); });
         for (String fields : List.of(
                 "\"profile\":\"review\"", "\"profile\":\"\"", "\"profile\":null", "\"profile\":3",
                 "\"tools\":null", "\"tools\":\"grep\"", "\"tools\":{}", "\"tools\":[null]",
@@ -84,10 +84,10 @@ class TaskToolTest {
                 "\"tools\":[\"unknown\"]", "\"tools\":[\"read_file\",\"write_file\"]",
                 "\"tools\":[\"task\"]", "\"tools\":[\"run_command\"]", "\"tools\":[\"web_fetch\"]")) {
             var args = MAPPER.readTree("{\"prompt\":\"调查\"," + fields + "}");
-            assertTrue(tool.execute(args, ctx()).startsWith("ERROR:"), fields);
+            assertTrue(tool.execute(args, ctx()).text().startsWith("ERROR:"), fields);
         }
         for (String invalid : List.of("null", "[]", "{\"prompt\":1}", "{\"prompt\":null}")) {
-            assertTrue(tool.execute(MAPPER.readTree(invalid), ctx()).startsWith("ERROR:"), invalid);
+            assertTrue(tool.execute(MAPPER.readTree(invalid), ctx()).text().startsWith("ERROR:"), invalid);
         }
         assertEquals(0, calls.get());
     }
@@ -108,19 +108,19 @@ class TaskToolTest {
     void backgroundFlagIsOptionalStrictBooleanAndExploreOnly() throws Exception {
         TaskTool tool = new TaskTool();
         AtomicReference<SubagentRequest> received = new AtomicReference<>();
-        tool.bind((request, cancelled) -> { received.set(request); return "回执"; });
-        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\"}"), ctx());
+        tool.bind((request, cancelled) -> { received.set(request); return com.jaco.tool.ToolResult.success("回执"); });
+        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\"}"), ctx()).text();
         assertTrue(!received.get().runInBackground());
-        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\",\"run_in_background\":true,\"tools\":[]}"), ctx());
+        tool.execute(MAPPER.readTree("{\"prompt\":\"调查\",\"run_in_background\":true,\"tools\":[]}"), ctx()).text();
         assertTrue(received.get().runInBackground());
         assertTrue(received.get().tools().isEmpty());
-        tool.execute(MAPPER.readTree("{\"prompt\":\"修改\",\"profile\":\"edit\",\"run_in_background\":false}"), ctx());
+        tool.execute(MAPPER.readTree("{\"prompt\":\"修改\",\"profile\":\"edit\",\"run_in_background\":false}"), ctx()).text();
         assertEquals(SubagentProfile.EDIT, received.get().profile());
         for (String invalid : List.of("null", "1", "\"true\"", "[]", "{}")) {
-            assertTrue(tool.execute(MAPPER.readTree("{\"prompt\":\"调查\",\"run_in_background\":" + invalid + "}"), ctx())
+            assertTrue(tool.execute(MAPPER.readTree("{\"prompt\":\"调查\",\"run_in_background\":" + invalid + "}"), ctx()).text()
                     .startsWith("ERROR:"));
         }
-        assertTrue(tool.execute(MAPPER.readTree("{\"prompt\":\"修改\",\"profile\":\"edit\",\"run_in_background\":true}"), ctx())
+        assertTrue(tool.execute(MAPPER.readTree("{\"prompt\":\"修改\",\"profile\":\"edit\",\"run_in_background\":true}"), ctx()).text()
                 .contains("仅支持 explore"));
         assertEquals("boolean", tool.schema().path("properties").path("run_in_background").path("type").asText());
     }
@@ -128,9 +128,9 @@ class TaskToolTest {
     @Test
     void blankPromptRejected() throws Exception {
         TaskTool tool = new TaskTool();
-        tool.bind((prompt, cancelled) -> "不应被调用");
+        tool.bind((prompt, cancelled) -> com.jaco.tool.ToolResult.success("不应被调用"));
         var args = MAPPER.createObjectNode();
         args.put("prompt", "   ");
-        assertEquals("ERROR: prompt 为空", tool.execute(args, ctx()));
+        assertEquals("ERROR: prompt 为空", tool.execute(args, ctx()).text());
     }
 }

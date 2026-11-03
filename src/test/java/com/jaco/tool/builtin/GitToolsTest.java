@@ -73,14 +73,14 @@ class GitToolsTest {
 
     private String status(ObjectNode args) throws Exception {
         ToolContext ctx = ctx();
-        String result = new GitStatusTool().execute(args, ctx);
+        String result = new GitStatusTool().execute(args, ctx).text();
         assertNull(ctx.currentProcess().get());
         return result;
     }
 
     private String diff(ObjectNode args) throws Exception {
         ToolContext ctx = ctx();
-        String result = new GitDiffTool().execute(args, ctx);
+        String result = new GitDiffTool().execute(args, ctx).text();
         assertNull(ctx.currentProcess().get());
         return result;
     }
@@ -246,7 +246,7 @@ class GitToolsTest {
         ToolContext ctx = ctx();
         ToolContext limited = new ToolContext(repo, ctx.sandbox(), ctx.shellChoice(), ctx.currentProcess(),
                 ctx.cancelled(), ctx.archiveFile(), 1000);
-        String out = new GitStatusTool().execute(MAPPER.createObjectNode(), limited);
+        String out = new GitStatusTool().execute(MAPPER.createObjectNode(), limited).text();
         assertTrue(out.length() <= 1000, "输出超限: " + out.length());
         assertTrue(out.contains("status_truncated: true"));
         assertFalse(entries(out).isEmpty());
@@ -273,11 +273,11 @@ class GitToolsTest {
         Path other = Files.createDirectory(tmp.resolve("plain"));
         ToolContext plain = new ToolContext(other, new ToolSandbox(other, List.of()), "auto", new AtomicReference<>(),
                 () -> false, null);
-        assertThrows(ToolException.class, () -> new GitStatusTool().execute(MAPPER.createObjectNode(), plain));
+        assertThrows(ToolException.class, () -> new GitStatusTool().execute(MAPPER.createObjectNode(), plain).text());
         Path sub = Files.createDirectory(repo.resolve("sub"));
         ToolContext restricted = new ToolContext(sub, new ToolSandbox(sub, List.of()), "auto", new AtomicReference<>(),
                 () -> false, null);
-        assertThrows(ToolException.class, () -> new GitDiffTool().execute(MAPPER.createObjectNode(), restricted));
+        assertThrows(ToolException.class, () -> new GitDiffTool().execute(MAPPER.createObjectNode(), restricted).text());
     }
 
     @Test
@@ -285,7 +285,7 @@ class GitToolsTest {
         ToolContext base = ctx();
         ToolContext cancelled = new ToolContext(repo, base.sandbox(), "auto", base.currentProcess(), () -> true, null);
         ToolException error = assertThrows(ToolException.class,
-                () -> new GitStatusTool().execute(MAPPER.createObjectNode(), cancelled));
+                () -> new GitStatusTool().execute(MAPPER.createObjectNode(), cancelled).text());
         assertTrue(error.getMessage().contains("cancelled"));
         assertNull(cancelled.currentProcess().get());
     }

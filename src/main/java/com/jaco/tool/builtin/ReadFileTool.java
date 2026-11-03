@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.jaco.tool.JsonSchema;
 import com.jaco.tool.Tool;
@@ -60,7 +62,11 @@ public final class ReadFileTool implements Tool {
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) throws IOException {
+    public ToolResult execute(JsonNode args, ToolContext ctx) throws IOException {
+        return ToolResult.success(executeText(args, ctx));
+    }
+
+    private String executeText(JsonNode args, ToolContext ctx) throws IOException {
         if (args == null || !args.isObject()) throw new ToolException("参数必须是对象");
         var fields = args.fieldNames();
         while (fields.hasNext()) {

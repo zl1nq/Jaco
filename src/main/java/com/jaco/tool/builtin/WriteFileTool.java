@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jaco.tool.JsonSchema;
@@ -46,7 +48,7 @@ public final class WriteFileTool implements Tool {
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) throws IOException {
+    public ToolResult execute(JsonNode args, ToolContext ctx) throws IOException {
         try {
             return prepare(args, ctx).execute();
         } catch (IOException | RuntimeException e) {

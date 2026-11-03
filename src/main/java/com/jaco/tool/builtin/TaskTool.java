@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.jaco.tool.JsonSchema;
 import com.jaco.tool.Tool;
@@ -21,7 +23,7 @@ public final class TaskTool implements Tool {
 
     /** 由 AgentRunner 实现：按请求同步等待报告，或返回后台任务回执。 */
     public interface Handler {
-        String run(SubagentRequest request, BooleanSupplier cancelled);
+        ToolResult run(SubagentRequest request, BooleanSupplier cancelled);
     }
 
     private volatile Handler handler;
@@ -69,15 +71,15 @@ public final class TaskTool implements Tool {
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) {
+    public ToolResult execute(JsonNode args, ToolContext ctx) {
         SubagentRequest request;
         try {
             request = parseRequest(args);
         } catch (IllegalArgumentException e) {
-            return "ERROR: " + e.getMessage();
+            return ToolResult.failure("ERROR: " + e.getMessage());
         }
         Handler h = handler;
-        if (h == null) return "ERROR: 子 agent 未接线";
+        if (h == null) return ToolResult.failure("ERROR: 子 agent 未接线");
         return h.run(request, ctx.cancelled());
     }
 

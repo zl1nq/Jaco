@@ -24,7 +24,7 @@ class FileVersionTest {
     }
 
     private String readVersion(ObjectNode args) throws Exception {
-        return versionIn(new ReadFileTool().execute(args, context()));
+        return versionIn(new ReadFileTool().execute(args, context()).text());
     }
 
     private String versionIn(String result) {
@@ -68,7 +68,7 @@ class FileVersionTest {
         assertThrows(ToolException.class, () -> new EditFileTool().prepare(editArgs(version), context()));
         assertEquals("old\nB", Files.readString(file));
         String fresh = readVersion(MAPPER.createObjectNode().put("path", "code.txt"));
-        new EditFileTool().execute(editArgs(fresh), context());
+        new EditFileTool().execute(editArgs(fresh), context()).text();
         assertEquals("new\nB", Files.readString(file));
     }
 
@@ -99,7 +99,7 @@ class FileVersionTest {
         Files.writeString(tmp.resolve("code.txt"), "");
         String version = readVersion(MAPPER.createObjectNode().put("path", "code.txt"));
         assertEquals(FileVersion.of(new byte[0]), version);
-        new WriteFileTool().execute(writeArgs(version), context());
+        new WriteFileTool().execute(writeArgs(version), context()).text();
         assertEquals("new", Files.readString(tmp.resolve("code.txt")));
     }
 
@@ -107,11 +107,11 @@ class FileVersionTest {
     void successfulWriteReturnsVersionForNextEditAndRejectsPreviousVersion() throws Exception {
         Files.writeString(tmp.resolve("code.txt"), "old");
         String original = readVersion(MAPPER.createObjectNode().put("path", "code.txt"));
-        String result = new WriteFileTool().execute(writeArgs(original), context());
+        String result = new WriteFileTool().execute(writeArgs(original), context()).text();
         String current = versionIn(result);
         assertEquals(readVersion(MAPPER.createObjectNode().put("path", "code.txt")), current);
-        assertThrows(ToolException.class, () -> new WriteFileTool().execute(writeArgs(original), context()));
-        new EditFileTool().execute(editArgs(current).put("old_text", "new").put("new_text", "next"), context());
+        assertThrows(ToolException.class, () -> new WriteFileTool().execute(writeArgs(original), context()).text());
+        new EditFileTool().execute(editArgs(current).put("old_text", "new").put("new_text", "next"), context()).text();
         assertEquals("next", Files.readString(tmp.resolve("code.txt")));
     }
 
@@ -119,7 +119,7 @@ class FileVersionTest {
     void newFileNeedsNoVersionButStaleVersionCannotRecreateDeletedFile() throws Exception {
         ObjectNode args = writeArgs(null);
         args.remove("expected_version");
-        new WriteFileTool().execute(args, context());
+        new WriteFileTool().execute(args, context()).text();
         String version = readVersion(MAPPER.createObjectNode().put("path", "code.txt"));
         Files.delete(tmp.resolve("code.txt"));
         assertThrows(ToolException.class, () -> new WriteFileTool().prepare(writeArgs(version), context()));

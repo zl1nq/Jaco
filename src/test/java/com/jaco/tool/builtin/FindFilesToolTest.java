@@ -34,7 +34,7 @@ class FindFilesToolTest {
     }
 
     private String find(ObjectNode args) throws Exception {
-        return new FindFilesTool().execute(args, ctx());
+        return new FindFilesTool().execute(args, ctx()).text();
     }
 
     @Test
@@ -84,7 +84,7 @@ class FindFilesToolTest {
                 "{\"pattern\":\"*\",\"path\":\"..\"}", "{\"pattern\":\"*\",\"max_results\":1001}",
                 "{\"pattern\":\"*\",\"max_results\":1.5}", "{\"pattern\":\"*\",\"exclude\":[null]}",
                 "{\"pattern\":\"*\",\"include_ignored\":1}")) {
-            assertThrows(ToolException.class, () -> new FindFilesTool().execute(MAPPER.readTree(json), ctx()), json);
+            assertThrows(ToolException.class, () -> new FindFilesTool().execute(MAPPER.readTree(json), ctx()).text(), json);
         }
     }
 
@@ -92,7 +92,7 @@ class FindFilesToolTest {
     void cancellationStopsSearch() {
         ToolContext context = new ToolContext(tmp, new ToolSandbox(tmp, List.of()), "auto", null, () -> true, null);
         assertThrows(ToolException.class, () -> new FindFilesTool().execute(
-                MAPPER.createObjectNode().put("pattern", "*"), context));
+                MAPPER.createObjectNode().put("pattern", "*"), context).text());
     }
 
     @Test
@@ -111,7 +111,7 @@ class FindFilesToolTest {
             assumeTrue(false, "当前环境无法创建符号链接: " + e.getMessage());
         }
         ToolContext context = new ToolContext(workspace, new ToolSandbox(workspace, List.of()), "auto", null, () -> false, null);
-        String out = new FindFilesTool().execute(MAPPER.createObjectNode().put("pattern", "*.txt"), context);
+        String out = new FindFilesTool().execute(MAPPER.createObjectNode().put("pattern", "*.txt"), context).text();
         assertTrue(out.startsWith("(no matches)"));
         assertTrue(out.contains("符号链接"));
     }

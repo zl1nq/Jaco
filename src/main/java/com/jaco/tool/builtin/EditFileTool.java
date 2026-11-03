@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jaco.tool.JsonSchema;
@@ -72,7 +74,7 @@ public final class EditFileTool implements Tool {
 
     @Override public String summary(JsonNode args) { return args.path("path").asText("?"); }
 
-    @Override public String execute(JsonNode args, ToolContext ctx) throws IOException {
+    @Override public ToolResult execute(JsonNode args, ToolContext ctx) throws IOException {
         try { return prepare(args, ctx).execute(); }
         catch (IOException | RuntimeException e) { throw e; }
         catch (Exception e) { throw new IOException(e); }

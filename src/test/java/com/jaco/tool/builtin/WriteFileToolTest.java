@@ -39,7 +39,7 @@ class WriteFileToolTest {
         if (file != null && Files.isRegularFile(file)) {
             args.put("expected_version", FileVersion.of(Files.readAllBytes(file)));
         }
-        return tool.execute(args, context());
+        return tool.execute(args, context()).text();
     }
 
     private void assertNoTemporaryFiles(Path directory) throws IOException {
@@ -59,10 +59,10 @@ class WriteFileToolTest {
                 "{\"path\":[],\"content\":\"new\"}", "{\"path\":\"\",\"content\":\"new\"}",
                 "{\"path\":\"   \",\"content\":\"new\"}",
                 "{\"path\":\"keep.txt\",\"content\":\"new\",\"append\":true}")) {
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.readTree(json), context()), json);
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.readTree(json), context()).text(), json);
             assertEquals("保留原文", Files.readString(tmp.resolve("keep.txt")));
         }
-        assertThrows(ToolException.class, () -> tool.execute(null, context()));
+        assertThrows(ToolException.class, () -> tool.execute(null, context()).text());
         assertThrows(ToolException.class, () -> write("invalid\u0000path", "new"));
         assertNoTemporaryFiles(tmp);
     }
@@ -70,7 +70,7 @@ class WriteFileToolTest {
     @Test
     void invalidParametersDoNotCreateDirectories() {
         assertThrows(ToolException.class, () -> tool.execute(
-                MAPPER.createObjectNode().put("path", "a/b/c.txt"), context()));
+                MAPPER.createObjectNode().put("path", "a/b/c.txt"), context()).text());
         assertFalse(Files.exists(tmp.resolve("a")));
     }
 

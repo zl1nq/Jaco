@@ -38,7 +38,7 @@ class AgentRunnerContextTest {
             public String description() { return "test"; }
             public JsonNode schema() { return JsonSchema.object().build(); }
             public String summary(JsonNode args) { return "test"; }
-            public String execute(JsonNode args, ToolContext ctx) throws Exception { return output.read(ctx); }
+            public com.jaco.tool.ToolResult execute(JsonNode args, ToolContext ctx) throws Exception { return com.jaco.tool.ToolResult.success(output.read(ctx)); }
         });
         registry.register(new RecallTool());
         store = new SessionStore(tmp);

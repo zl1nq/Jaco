@@ -30,7 +30,7 @@ final class FileChange {
 
     static PreparedToolCall prepare(Path file, byte[] original, String before, String updated,
                                     String operation, String preview, Runnable check) {
-        return new PreparedToolCall(preview, () -> {
+        return PreparedToolCall.text(preview, () -> {
             check.run();
             AtomicFileWriter.checkUnchanged(file, original, check);
             if (original != null && before.equals(updated)) {

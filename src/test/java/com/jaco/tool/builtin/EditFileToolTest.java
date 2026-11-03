@@ -39,7 +39,7 @@ class EditFileToolTest {
         if (file != null && Files.isRegularFile(file)) {
             args.put("expected_version", FileVersion.of(Files.readAllBytes(file)));
         }
-        return tool.execute(args, context());
+        return tool.execute(args, context()).text();
     }
 
     private void assertNoTemporaryFiles() throws IOException {
@@ -97,10 +97,10 @@ class EditFileToolTest {
                 "{\"path\":\"code.txt\",\"old_text\":\"old\",\"new_text\":[]}",
                 "{\"path\":42,\"old_text\":\"old\",\"new_text\":\"new\"}",
                 "{\"path\":\"code.txt\",\"old_text\":\"old\",\"new_text\":\"new\",\"replace_all\":true}")) {
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.readTree(json), context()), json);
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.readTree(json), context()).text(), json);
             assertEquals("old", Files.readString(file));
         }
-        assertThrows(ToolException.class, () -> tool.execute(null, context()));
+        assertThrows(ToolException.class, () -> tool.execute(null, context()).text());
         assertThrows(ToolException.class, () -> edit("   ", "old", "new"));
         assertThrows(ToolException.class, () -> edit("invalid\u0000path", "old", "new"));
         assertThrows(ToolException.class, () -> edit("a/b/missing.txt", "old", "new"));
@@ -144,7 +144,7 @@ class EditFileToolTest {
         assertEquals("edit_file", registry.definitions().get(0).function().name());
         var args = MAPPER.createObjectNode().put("path", "code.txt").put("old_text", "old").put("new_text", "new");
         args.put("expected_version", FileVersion.of(Files.readAllBytes(tmp.resolve("code.txt"))));
-        registry.execute(new ToolCall("c1", "function", new ToolCall.FunctionCall("edit_file", args.toString())), context());
+        registry.execute(new ToolCall("c1", "function", new ToolCall.FunctionCall("edit_file", args.toString())), context()).text();
         assertEquals("new", Files.readString(tmp.resolve("code.txt")));
     }
 }

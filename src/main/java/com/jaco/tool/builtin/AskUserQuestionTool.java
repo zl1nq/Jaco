@@ -63,9 +63,9 @@ public final class AskUserQuestionTool implements Tool, AgentHook, AutoCloseable
     @Override public PreparedToolCall prepare(JsonNode args, ToolContext ctx) {
         List<UserQuestion> questions = parse(args);
         long epoch = generation.get();
-        return new PreparedToolCall(null, () -> ask(questions, ctx, epoch));
+        return PreparedToolCall.text(null, () -> ask(questions, ctx, epoch));
     }
-    @Override public String execute(JsonNode args, ToolContext ctx) throws Exception { return prepare(args, ctx).execute(); }
+    @Override public ToolResult execute(JsonNode args, ToolContext ctx) throws Exception { return prepare(args, ctx).execute(); }
 
     private String ask(List<UserQuestion> questions, ToolContext ctx, long epoch) throws Exception {
         TurnEventSink sink = TurnEventSink.current();

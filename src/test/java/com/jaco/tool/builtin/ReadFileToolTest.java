@@ -30,7 +30,7 @@ class ReadFileToolTest {
     }
     private ObjectNode args() { return MAPPER.createObjectNode().put("path", "code.txt"); }
     private String read(ObjectNode args, int budget) throws Exception {
-        return tool.execute(args, context(budget, () -> false));
+        return tool.execute(args, context(budget, () -> false)).text();
     }
     private String version(String out) { return out.lines().findFirst().orElseThrow().substring("文件版本: ".length()); }
     private int cursor(String out, String field) {
@@ -153,7 +153,7 @@ class ReadFileToolTest {
                 catch (Exception ex) { throw new AssertionError(ex); }
             }
             return false;
-        })));
+        })).text());
         assertTrue(e.getMessage().contains("读取期间发生变化"));
     }
 
@@ -193,9 +193,9 @@ class ReadFileToolTest {
 
     @Test void cancellationBeforeAndDuringScanAndThreadInterruption() throws Exception {
         Files.writeString(tmp.resolve("code.txt"), "x".repeat(20000));
-        assertThrows(ToolException.class, () -> tool.execute(args(), context(8000, () -> true)));
+        assertThrows(ToolException.class, () -> tool.execute(args(), context(8000, () -> true)).text());
         AtomicInteger checks = new AtomicInteger();
-        assertThrows(ToolException.class, () -> tool.execute(args(), context(8000, () -> checks.incrementAndGet() > 100)));
+        assertThrows(ToolException.class, () -> tool.execute(args(), context(8000, () -> checks.incrementAndGet() > 100)).text());
         Thread.currentThread().interrupt();
         try { assertThrows(ToolException.class, () -> read(args(), 8000)); }
         finally { Thread.interrupted(); }
@@ -209,7 +209,7 @@ class ReadFileToolTest {
                 "{\"path\":\"code.txt\",\"limit\":\"2\"}", "{\"path\":\"code.txt\",\"column_offset\":-1}",
                 "{\"path\":\"code.txt\",\"expected_version\":null}", "{\"path\":\"code.txt\",\"expected_version\":\"bad\"}",
                 "{\"path\":\"code.txt\",\"extra\":1}")) {
-            assertThrows(ToolException.class, () -> tool.execute(MAPPER.readTree(json), context(8000, () -> false)), json);
+            assertThrows(ToolException.class, () -> tool.execute(MAPPER.readTree(json), context(8000, () -> false)).text(), json);
         }
         assertThrows(ToolException.class, () -> read(args().put("path", "missing"), 8000));
         assertThrows(ToolException.class, () -> read(args().put("path", "."), 8000));

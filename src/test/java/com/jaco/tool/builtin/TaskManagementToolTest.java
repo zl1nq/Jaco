@@ -11,11 +11,11 @@ class TaskManagementToolTest {
 
     @Test void statusIsNonblockingAndCannotExecuteConsoleCancelSyntax() throws Exception {
         var tool = new TaskStatusTool(id -> id.isEmpty() ? "任务列表" : "报告: " + id);
-        assertEquals("任务列表", tool.execute(mapper.readTree("{}"), null));
-        assertEquals("报告: task-1", tool.execute(mapper.readTree("{\"task_id\":\"task-1\"}"), null));
+        assertEquals("任务列表", tool.execute(mapper.readTree("{}"), null).text());
+        assertEquals("报告: task-1", tool.execute(mapper.readTree("{\"task_id\":\"task-1\"}"), null).text());
         for (String invalid : List.of("null", "[]", "{\"task_id\":null}", "{\"task_id\":1}",
                 "{\"task_id\":\"\"}", "{\"task_id\":\"cancel task-1\"}")) {
-            assertTrue(tool.execute(mapper.readTree(invalid), null).startsWith("ERROR:"));
+            assertTrue(tool.execute(mapper.readTree(invalid), null).text().startsWith("ERROR:"));
         }
     }
 
@@ -24,10 +24,10 @@ class TaskManagementToolTest {
         var tool = new TaskCancelTool(id -> { calls.incrementAndGet(); return "取消 " + id; });
         for (String invalid : List.of("null", "[]", "{}", "{\"task_id\":null}",
                 "{\"task_id\":false}", "{\"task_id\":\" \"}")) {
-            assertTrue(tool.execute(mapper.readTree(invalid), null).startsWith("ERROR:"));
+            assertTrue(tool.execute(mapper.readTree(invalid), null).text().startsWith("ERROR:"));
         }
         assertEquals(0, calls.get());
-        assertEquals("取消 task-1", tool.execute(mapper.readTree("{\"task_id\":\" task-1 \"}"), null));
+        assertEquals("取消 task-1", tool.execute(mapper.readTree("{\"task_id\":\" task-1 \"}"), null).text());
         assertEquals(1, calls.get());
     }
 }

@@ -7,6 +7,15 @@ public record SubagentResult(String id, ExitReason exitReason, String report, St
     public record RunStats(long elapsedMillis, int iterations, long promptTokens,
                            long completionTokens, long totalTokens, boolean usageAvailable) { }
 
+    public com.jaco.tool.ToolResult executionResult() {
+        var status = switch (exitReason) {
+            case SUCCEEDED -> com.jaco.tool.ToolExecution.Status.SUCCEEDED;
+            case CANCELLED, SHUTDOWN -> com.jaco.tool.ToolExecution.Status.CANCELLED;
+            default -> com.jaco.tool.ToolExecution.Status.FAILED;
+        };
+        return new com.jaco.tool.ToolResult(status, toToolResult());
+    }
+
     public String toToolResult() {
         if (exitReason == ExitReason.SUCCEEDED) return report;
         String text = switch (exitReason) {

@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.jaco.hook.AgentHook;
 import com.jaco.tool.PreparedToolCall;
@@ -75,7 +77,7 @@ public final class BackgroundProcessManager implements AgentHook, AutoCloseable 
         }
         Path owner = owner(ctx);
         RunCommandTool.Options options = runner.options(args, ctx, 3600, 86400, "process_start");
-        return new PreparedToolCall(null, () -> start(options, owner, expectedGeneration, ctx));
+        return PreparedToolCall.text(null, () -> start(options, owner, expectedGeneration, ctx));
     }
 
     private synchronized String start(RunCommandTool.Options options, Path owner, long expectedGeneration, ToolContext caller)
@@ -127,12 +129,12 @@ public final class BackgroundProcessManager implements AgentHook, AutoCloseable 
             if (args.size() != 0) {
                 throw new ToolException("读取日志参数需要 task_id；省略全部参数可列出当前会话任务");
             }
-            return new PreparedToolCall(null, () -> list(ctx));
+            return PreparedToolCall.text(null, () -> list(ctx));
         }
         long offset = CommandArguments.number(args, "offset", 0, 0, Long.MAX_VALUE);
         int limit = (int) CommandArguments.number(args, "limit", 2000, 1, 10000);
         int wait = (int) CommandArguments.number(args, "wait_ms", 0, 0, 10000);
-        return new PreparedToolCall(null, () -> poll(id, offset, limit, wait, ctx));
+        return PreparedToolCall.text(null, () -> poll(id, offset, limit, wait, ctx));
     }
 
     private String poll(String id, long offset, int limit, int wait, ToolContext ctx) throws InterruptedException {
@@ -165,7 +167,7 @@ public final class BackgroundProcessManager implements AgentHook, AutoCloseable 
             throw new ToolException("task_id 必须提供非空白字符串");
         }
         task(id, ctx);
-        return new PreparedToolCall(null, () -> {
+        return PreparedToolCall.text(null, () -> {
             checkCaller(ctx);
             Task task = task(id, ctx);
             if (task.result == null) {

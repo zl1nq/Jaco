@@ -40,7 +40,7 @@ class AgentRunnerSubagentLifecycleTest {
             public String description() { return "read"; }
             public JsonNode schema() { return JsonSchema.object().build(); }
             public String summary(JsonNode args) { return "read"; }
-            public String execute(JsonNode args, ToolContext ctx) { return toolOutput; }
+            public com.jaco.tool.ToolResult execute(JsonNode args, ToolContext ctx) { return com.jaco.tool.ToolResult.success(toolOutput); }
         });
         TaskTool task = new TaskTool();
         registry.register(task);
@@ -138,7 +138,7 @@ class AgentRunnerSubagentLifecycleTest {
     @Test void backgroundCancelAndTimeoutProduceQueryableResultsAndNotifications() throws Exception {
         try (var agent = runner(request -> TestStreams.of(), "", 100_000)) {
             var request = new SubagentRequest("后台调查", SubagentProfile.EXPLORE, null, true);
-            assertTrue(agent.runSubagent(request, () -> true).contains("未启动"));
+            assertTrue(agent.runSubagent(request, () -> true).text().contains("未启动"));
             assertTrue(agent.subagentSnapshots().isEmpty());
             agent.runSubagent(request, () -> false);
             String id = agent.subagentSnapshots().getFirst().id();
@@ -157,7 +157,7 @@ class AgentRunnerSubagentLifecycleTest {
     @Test void sessionChangeCancelsBackgroundWithoutDeliveringOldSessionNotice() throws Exception {
         var stream = TestStreams.of();
         try (var agent = runner(request -> stream, "", 100_000)) {
-            agent.runSubagent(new SubagentRequest("后台调查", SubagentProfile.EXPLORE, null, true), () -> false);
+            agent.runSubagent(new SubagentRequest("后台调查", SubagentProfile.EXPLORE, null, true), () -> false).text();
             var child = agent.subagentSnapshots().getFirst();
             agent.newSession();
             eventually(() -> agent.subagentSnapshots().getFirst().state() == SubagentState.EXITED);
@@ -170,7 +170,7 @@ class AgentRunnerSubagentLifecycleTest {
 
     @Test void backgroundFailureIsNotifiedAndQueryable() throws Exception {
         try (var agent = runner(request -> { throw new IOException("后台请求失败"); }, "", 100_000)) {
-            agent.runSubagent(new SubagentRequest("调查", SubagentProfile.EXPLORE, null, true), () -> false);
+            agent.runSubagent(new SubagentRequest("调查", SubagentProfile.EXPLORE, null, true), () -> false).text();
             var child = agent.subagentSnapshots().getFirst();
             eventually(() -> agent.subagentCommand(child.id()).contains("FAILED"));
             AtomicReference<String> notice = new AtomicReference<>();

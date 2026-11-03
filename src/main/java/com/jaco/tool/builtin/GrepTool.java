@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.jaco.tool.JsonSchema;
 import com.jaco.tool.Tool;
@@ -56,7 +58,11 @@ public final class GrepTool implements Tool {
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) throws IOException {
+    public ToolResult execute(JsonNode args, ToolContext ctx) throws IOException {
+        return ToolResult.success(executeText(args, ctx));
+    }
+
+    private String executeText(JsonNode args, ToolContext ctx) throws IOException {
         SearchSupport.validate(args, "pattern", "path", "include", "exclude", "include_ignored",
                 "literal", "ignore_case", "context_lines", "max_results");
         String expression = SearchSupport.string(args, "pattern", null);

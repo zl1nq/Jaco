@@ -1,5 +1,7 @@
 package com.jaco.tool.builtin;
 
+import com.jaco.tool.ToolResult;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jaco.tool.JsonSchema;
@@ -63,7 +65,7 @@ public final class RunCommandTool implements Tool {
     @Override
     public PreparedToolCall prepare(JsonNode args, ToolContext ctx) {
         Options options = options(args, ctx, 120, 600, "run_command");
-        return new PreparedToolCall(null, () -> run(options, ctx, new CommandOutput(ctx.archiveFile())).render());
+        return new PreparedToolCall(null, () -> run(options, ctx, new CommandOutput(ctx.archiveFile())).toToolResult());
     }
 
     Options options(JsonNode args, ToolContext ctx, int defaultTimeout, int maxTimeout, String tool) {
@@ -85,7 +87,7 @@ public final class RunCommandTool implements Tool {
     }
 
     @Override
-    public String execute(JsonNode args, ToolContext ctx) throws Exception {
+    public ToolResult execute(JsonNode args, ToolContext ctx) throws Exception {
         return prepare(args, ctx).execute();
     }
 
@@ -96,6 +98,11 @@ public final class RunCommandTool implements Tool {
     }
 
     record Result(String status, Integer exitCode, long durationMs, Options options, String warning, CommandOutput output) {
+        ToolResult toToolResult() {
+            return new ToolResult(status.equals("cancelled") ? com.jaco.tool.ToolExecution.Status.CANCELLED
+                    : status.equals("exited") && Integer.valueOf(0).equals(exitCode)
+                    ? com.jaco.tool.ToolExecution.Status.SUCCEEDED : com.jaco.tool.ToolExecution.Status.FAILED, render());
+        }
         String render() {
             return "status: " + status + "\nexit_code: " + exitCode
                     + "\nduration_ms: " + durationMs + "\ncwd: " + options.cwd() + "\nencoding: " + options.encoding().name()
