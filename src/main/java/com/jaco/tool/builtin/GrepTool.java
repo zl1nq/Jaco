@@ -37,7 +37,8 @@ public final class GrepTool implements Tool {
     public String description() { return "按正则或普通文本搜索文件内容。"; }
 
     @Override public String prompt() {
-        return "搜索 UTF-8 文件内容，默认 Java 正则，可用 literal 进行纯文本搜索、ignore_case 忽略大小写。"
+        return "output_mode 默认 content 返回命中内容；files 每个命中文件返回一次；count 返回各文件命中行数和汇总。非内容模式 context_lines 必须为 0。"
+                + "搜索 UTF-8 文件内容，默认 Java 正则，可用 literal 进行纯文本搜索、ignore_case 忽略大小写。"
                 + "目录递归，默认跳过常见依赖/构建目录，不跟随子项符号链接；include/exclude 支持 glob。"
                 + "输出路径:行号:内容；上下文使用路径-行号-内容，长行围绕命中位置截取并标明列号。"
                 + "最多返回 max_results 个命中行，达到上限提前停止；更多内容请缩小范围或 read_file。";
@@ -54,7 +55,8 @@ public final class GrepTool implements Tool {
                 .bool("literal", "按普通文本搜索，默认 false")
                 .bool("ignore_case", "忽略大小写，默认 false")
                 .integer("context_lines", "命中行前后上下文行数，默认 0，范围 0-10", 0, 10)
-                .integer("max_results", "命中行上限，默认 100，范围 1-1000", 1, 1000)
+                .integer("max_results", "结果上限，默认 100，范围 1-1000；content 限制命中行数，files/count 限制命中文件数", 1, 1000)
+                .string("output_mode", "输出模式，默认 content；count 只汇总已返回文件，提前停止会提示", "content", "files", "count")
                 .required("pattern").build();
     }
 
@@ -70,7 +72,7 @@ public final class GrepTool implements Tool {
 
     private String executeText(JsonNode args, ToolContext ctx) throws IOException {
         SearchSupport.validate(args, "pattern", "path", "include", "exclude", "include_ignored",
-                "literal", "ignore_case", "context_lines", "max_results");
+                "literal", "ignore_case", "context_lines", "max_results", "output_mode");
         String expression = SearchSupport.string(args, "pattern", null);
         if (expression == null) {
             throw new ToolException("pattern 必须提供非空白字符串");
@@ -89,17 +91,50 @@ public final class GrepTool implements Tool {
         SearchSupport.Glob filter = include == null ? null : new SearchSupport.Glob(include);
         int max = SearchSupport.integer(args, "max_results", 100, 1, 1000);
         int context = SearchSupport.integer(args, "context_lines", 0, 0, 10);
+        String mode = SearchSupport.string(args, "output_mode", "content");
+        if (!List.of("content", "files", "count").contains(mode)) throw new ToolException("output_mode 必须是 content、files 或 count");
+        if (!mode.equals("content") && context != 0) throw new ToolException("非 content 模式 context_lines 必须为 0");
         boolean includeIgnored = SearchSupport.bool(args, "include_ignored");
         List<String> hits = new ArrayList<>();
         SearchSupport.Scan scan = new SearchSupport.Scan();
         int[] count = {0};
+        long[] matchingLines = {0};
         SearchSupport.walk(root, ctx, SearchSupport.exclusions(args), includeIgnored, scan, (file, relative) -> {
             if (filter != null && !filter.matches(Path.of(relative))) {
                 return true;
             }
-            return searchFile(file, relative, pattern, context, max, count, hits, ctx);
+            if (mode.equals("content")) return searchFile(file, relative, pattern, context, max, count, hits, ctx);
+            long lines = countMatchingLines(file, pattern, mode.equals("files"), ctx);
+            if (lines > 0) {
+                hits.add(mode.equals("files") ? relative : relative + ": " + lines);
+                matchingLines[0] += lines;
+                count[0]++;
+            }
+            return count[0] < max;
         });
-        return scan.finish(hits);
+        String result = scan.finish(hits);
+        return mode.equals("count") ? result + "\ntotal_matching_lines: " + matchingLines[0]
+                + "\nmatching_files: " + count[0] : result;
+    }
+
+    private long countMatchingLines(Path file, Pattern pattern, boolean firstOnly, ToolContext ctx) throws IOException {
+        try (var in = Files.newInputStream(file)) {
+            for (byte b : in.readNBytes(8192)) if (b == 0) return 0;
+        }
+        long count = 0;
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String text;
+            while (true) {
+                SearchSupport.checkCancelled(ctx);
+                text = reader.readLine();
+                if (text == null) break;
+                if (pattern.matcher(text).find()) {
+                    count++;
+                    if (firstOnly) break;
+                }
+            }
+        }
+        return count;
     }
 
     private record Line(int number, String text) {

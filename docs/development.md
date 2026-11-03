@@ -43,3 +43,5 @@ mvn test
 工具通过 `isReadOnly()`、`requiresConfirmationChannel()`、`isSubagentAllowed()` 声明属性，默认可写、需要确认渠道且禁止子任务。子任务预设和本次允许列表继续收窄工具范围；只读声明不绕过网页等专用授权策略。
 
 `Tool.description()` 提供简短能力描述，`Tool.prompt()` 维护详细用法。注册表按稳定注册顺序装配，子任务仅接收本次可用工具的说明；通用授权规则保留在 agent 系统提示词中。
+
+`Tool.outputPolicy()` 默认归档并预览，分页工具声明 `PAGINATED`。父子循环共用预算检查，分页结果超限会记为失败，模型回填、完成事件和审计使用同一检查后的结果。

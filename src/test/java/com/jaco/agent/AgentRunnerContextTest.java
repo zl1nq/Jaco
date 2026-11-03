@@ -27,8 +27,12 @@ class AgentRunnerContextTest {
     @FunctionalInterface interface Script { ChatStream respond(ChatRequest request) throws IOException; }
     @FunctionalInterface interface Output { String read(ToolContext ctx) throws Exception; }
     private SessionStore store;
+    private final List<ToolExecution> completions = new ArrayList<>();
 
     private AgentRunner runner(Script script, Output output, long limit, int budget) throws Exception {
+        return runner(script, output, limit, budget, Tool.OutputPolicy.ARCHIVE_PREVIEW);
+    }
+    private AgentRunner runner(Script script, Output output, long limit, int budget, Tool.OutputPolicy policy) throws Exception {
         OpenAiCompatClient client = new OpenAiCompatClient("http://localhost", "k") {
             @Override public ChatStream chatStream(ChatRequest request) throws IOException { return script.respond(request); }
         };
@@ -36,6 +40,7 @@ class AgentRunnerContextTest {
         registry.register(new Tool() {
             public boolean isSubagentAllowed() { return true; }
             public boolean requiresConfirmationChannel() { return false; }
+            public OutputPolicy outputPolicy() { return policy; }
             public String name() { return "read_file"; }
             public String description() { return "test"; }
             public JsonNode schema() { return JsonSchema.object().build(); }
@@ -45,7 +50,9 @@ class AgentRunnerContextTest {
         registry.register(new RecallTool());
         store = new SessionStore(tmp);
         AgentRunner agent = new AgentRunner(client, new ProviderConfig("http://localhost", "k", "m", null),
-                null, store, new HookChain(List.of()), registry, new ToolSandbox(tmp, List.of()), tmp, "auto", 15, limit, budget);
+                null, store, new HookChain(List.of(new com.jaco.hook.AgentHook() {
+                    public void onToolCompleted(ToolCall call, ToolExecution execution) { completions.add(execution); }
+                })), registry, new ToolSandbox(tmp, List.of()), tmp, "auto", 15, limit, budget);
         agent.start();
         return agent;
     }
@@ -242,5 +249,45 @@ class AgentRunnerContextTest {
             } else if (m.role() == Role.TOOL) assertTrue(pending.remove(m.toolCallId()));
         }
         assertTrue(pending.isEmpty());
+    }
+
+    @Test void paginatedBudgetFailuresReachBothLoopsAndCompletionHooks() throws Exception {
+        for (boolean child : List.of(false, true)) {
+            AtomicInteger calls = new AtomicInteger();
+            List<ChatRequest> requests = new ArrayList<>();
+            AtomicReference<Path> archive = new AtomicReference<>();
+            try (var agent = runner(request -> {
+                requests.add(request);
+                return calls.getAndIncrement() == 0 ? call("page", "read_file", "{}") : answer();
+            }, ctx -> { archive.set(ctx.archiveFile()); return "x".repeat(2000) + "next_line=20"; },
+                    100_000, 500, Tool.OutputPolicy.PAGINATED)) {
+                if (child) assertEquals("完成", agent.runSubagent("分页读取", () -> false));
+                else assertNull(finish(agent).error());
+                String result = requests.get(1).messages().getLast().content();
+                assertTrue(result.contains("分页工具输出超过预算"));
+                assertFalse(result.contains("next_line=20"));
+                assertTrue(result.length() <= 500);
+                assertEquals(ToolExecution.Status.FAILED, completions.getLast().status());
+                assertEquals(result, completions.getLast().result());
+                assertFalse(Files.exists(archive.get()));
+            }
+        }
+    }
+
+    @Test void budgetedPagesKeepTheirEntireCursor() throws Exception {
+        for (boolean child : List.of(false, true)) {
+            AtomicInteger calls = new AtomicInteger();
+            List<ChatRequest> requests = new ArrayList<>();
+            String page = "x".repeat(480) + "\nnext_line=20";
+            try (var agent = runner(request -> {
+                requests.add(request);
+                return calls.getAndIncrement() == 0 ? call("page", "read_file", "{}") : answer();
+            }, ctx -> page, 100_000, 500, Tool.OutputPolicy.PAGINATED)) {
+                if (child) assertEquals("完成", agent.runSubagent("分页读取", () -> false));
+                else assertNull(finish(agent).error());
+                assertEquals(page, requests.get(1).messages().getLast().content());
+                assertEquals(ToolExecution.Status.SUCCEEDED, completions.getLast().status());
+            }
+        }
     }
 }

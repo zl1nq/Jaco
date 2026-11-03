@@ -3,6 +3,8 @@ package com.jaco.agent;
 import com.jaco.config.ProviderConfig;
 import com.jaco.hook.HookChain;
 import com.jaco.llm.*;
+import com.jaco.tool.Tool;
+import com.jaco.tool.ToolExecution;
 import com.jaco.session.Session;
 import com.jaco.session.SessionStore;
 import com.jaco.agent.subagent.SubagentControl;
@@ -76,7 +78,17 @@ public final class AgentLoopSupport {
         return new IterationResult(content.toString(), accumulator.build(), finishReason, usage, error);
     }
 
-    public String gateToolResult(Session owner, String result) {
+    public ToolExecution gateToolResult(Session owner, ToolExecution execution, Tool tool) {
+        if (execution.result().length() <= maxToolResultChars) return execution;
+        if (tool != null && tool.outputPolicy() == Tool.OutputPolicy.PAGINATED) {
+            String error = unicodePrefix("ERROR: 分页工具输出超过预算，未返回不完整页面；请缩小 limit/content_limit 或搜索范围后重试",
+                    Math.max(0, maxToolResultChars));
+            return new ToolExecution(ToolExecution.Status.FAILED, error);
+        }
+        return new ToolExecution(execution.status(), archiveToolResult(owner, execution.result()));
+    }
+
+    private String archiveToolResult(Session owner, String result) {
         if (result.length() <= maxToolResultChars) {
             return result;
         }

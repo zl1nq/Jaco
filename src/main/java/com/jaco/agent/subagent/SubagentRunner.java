@@ -178,7 +178,8 @@ public final class SubagentRunner {
             Consumer<TurnEvent> events = sink != null && registry.get(name) != null && registry.get(name).requiresConfirmationChannel()
                     ? sink::emit : e -> { };
             ToolExecution execution = executor.execute(call, ctx, tools, events);
-            String result = support.gateToolResult(child, execution.result());
+            execution = support.gateToolResult(child, execution, registry.get(name));
+            String result = execution.result();
             child.messages().add(Message.toolResult(call.id(), result));
             control.progress(partialFindings(child.messages()));
             executor.completed(call, execution, events);

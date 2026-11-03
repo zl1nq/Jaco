@@ -32,6 +32,8 @@ import java.util.function.LongSupplier;
 
 /** 需要网络授权的网页抓取；快照在会话内有界保存，分页不重新请求。 */
 public final class WebFetchTool implements Tool, AgentHook, AutoCloseable {
+    @Override public OutputPolicy outputPolicy() { return OutputPolicy.PAGINATED; }
+
     @Override public boolean requiresConfirmationChannel() { return false; }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();

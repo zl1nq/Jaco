@@ -171,4 +171,46 @@ class GrepToolTest {
         assertTrue(out.contains("符号链接"));
         assertFalse(out.contains("SECRET"));
     }
+
+    @Test void outputModesPreserveDefaultAndDeduplicateFiles() throws Exception {
+        write("a.txt", "needle needle\nneedle\n");
+        write("b.txt", "needle\nother\n");
+        assertEquals(grep(args("needle")), grep(args("needle").put("output_mode", "content")));
+        String files = grep(args("needle").put("output_mode", "files"));
+        assertEquals(java.util.Set.of("a.txt", "b.txt"), java.util.Set.copyOf(files.lines().toList()));
+        assertEquals(2, files.lines().count());
+        String counts = grep(args("needle").put("output_mode", "count"));
+        assertTrue(counts.contains("a.txt: 2"));
+        assertTrue(counts.contains("b.txt: 1"));
+        assertTrue(counts.contains("total_matching_lines: 3"));
+        assertTrue(counts.contains("matching_files: 2"));
+    }
+
+    @Test void countLimitAppliesToFilesAndCompletesEachReturnedFile() throws Exception {
+        write("a.txt", "needle\n".repeat(20));
+        String out = grep(args("needle").put("path", "a.txt").put("output_mode", "count").put("max_results", 1));
+        assertTrue(out.contains("a.txt: 20"));
+        assertTrue(out.contains("total_matching_lines: 20"));
+        assertTrue(out.contains("提前停止"));
+        assertTrue(grep(args("absent").put("output_mode", "count")).contains("total_matching_lines: 0"));
+        assertEquals("(no matches)", grep(args("absent").put("output_mode", "files")));
+    }
+
+    @Test void summaryModesShareFiltersAndReportSkippedFiles() throws Exception {
+        write("a.txt", "NEEDLE.X\n");
+        write("node_modules/ignored.txt", "NEEDLE.X");
+        write("other.java", "NEEDLE.X");
+        Files.write(tmp.resolve("invalid.txt"), new byte[] {(byte) 0xff});
+        for (String mode : List.of("files", "count")) {
+            String out = grep(args("needle.x").put("literal", true).put("ignore_case", true)
+                    .put("include", "*.txt").put("output_mode", mode));
+            assertTrue(out.contains("a.txt"));
+            assertFalse(out.contains("ignored.txt"));
+            assertFalse(out.contains("other.java"));
+            assertTrue(out.contains("搜索不完整"));
+            assertThrows(ToolException.class, () -> grep(args("x").put("output_mode", mode).put("context_lines", 1)));
+            assertThrows(ToolException.class, () -> new GrepTool().execute(args("x").put("output_mode", mode), ctx(() -> true)));
+        }
+        assertThrows(ToolException.class, () -> grep(args("x").put("output_mode", "invalid")));
+    }
 }

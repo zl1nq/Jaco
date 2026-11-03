@@ -697,7 +697,8 @@ public final class AgentRunner implements AutoCloseable {
         var executor = new ToolCallExecutor(registry, hooks);
         for (ToolCall call : calls) {
             var execution = executor.execute(call, ctx, null, handle::emit);
-            String result = support.gateToolResult(owner, execution.result());
+            execution = support.gateToolResult(owner, execution, registry.get(call.function().name()));
+            String result = execution.result();
             owner.messages().add(Message.toolResult(call.id(), result));
             executor.completed(call, execution, handle::emit);
         }

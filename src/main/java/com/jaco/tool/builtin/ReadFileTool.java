@@ -29,6 +29,8 @@ import java.util.Set;
 
 /** 流式扫描完整 UTF-8 文件计算版本，仅保留本页内容。 */
 public final class ReadFileTool implements Tool {
+    @Override public OutputPolicy outputPolicy() { return OutputPolicy.PAGINATED; }
+
     @Override public boolean requiresConfirmationChannel() { return false; }
     @Override public boolean isReadOnly() { return true; }
     @Override public boolean isSubagentAllowed() { return true; }

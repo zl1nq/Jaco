@@ -24,6 +24,11 @@ public interface Tool {
     /** 仅显式声明的工具可供子任务使用，仍须通过预设和调用允许列表。 */
     default boolean isSubagentAllowed() { return false; }
 
+    enum OutputPolicy { ARCHIVE_PREVIEW, PAGINATED }
+
+    /** 分页工具必须自行保留预算内完整的续读元数据。 */
+    default OutputPolicy outputPolicy() { return OutputPolicy.ARCHIVE_PREVIEW; }
+
     /** JSON Schema（object 类型），描述 execute 接受的参数。 */
     JsonNode schema();
 
