@@ -77,7 +77,7 @@ public final class SubagentRunner {
             systemPrompt += "\n本次运行可用工具: " + (tools.isEmpty() ? "无，只根据任务说明回答，不调用工具"
                     : tools.stream().sorted().toList()) + "。不得调用其他工具。";
         }
-        messages.add(Message.system(systemPrompt));
+        messages.add(Message.system(systemPrompt + registry.prompts(tools)));
         messages.add(Message.user(spec.prompt()));
         List<ToolDefinition> defs = registry.definitions(tools);
         ContextCompactor compactor = new ContextCompactor(sessions, child, contextLimit);

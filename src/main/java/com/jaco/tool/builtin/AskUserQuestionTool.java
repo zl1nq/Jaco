@@ -30,11 +30,18 @@ public final class AskUserQuestionTool implements Tool, AgentHook, AutoCloseable
     private final AtomicBoolean closed = new AtomicBoolean();
 
     @Override public String name() { return "ask_user_question"; }
-    @Override public String description() {
+    @Override public String description() { return "向用户提问并返回答案，仅主任务可用。"; }
+
+    @Override public String prompt() {
         return "仅主任务使用：向用户逐题提问，一次 1～3 题。选项题提供 2～5 项且恰好一个 recommended=true，"
                 + "必须说明 recommendation_reason，同时始终支持自由输入。空提交或主动跳过采用推荐项；静默等待不自动选择。"
                 + "省略 options 为纯文本题，空提交需填写，跳过为未回答。只在缺失信息会影响工作且无法合理判断时提问。"
-                + "答案 source 区分用户选择、自定义和默认采用；推荐默认不是用户明确选择，也不授予写入或命令权限。";
+                + "答案 source 区分用户选择、自定义和默认采用；推荐默认不是用户明确选择，也不授予写入或命令权限。"
+                + "\n" + """
+                - 仅在缺失信息影响后续工作且无法合理判断时，用 ask_user_question 提问；第一版仅主任务可用，一次最多 3 题
+                - 有选项时提供 2～5 项、恰好一个推荐项及 recommendation_reason，始终允许自由输入；纯文本题省略 options
+                - 空提交或主动跳过采用推荐项，静默不自动提交；根据返回的 source 表述答案，默认采用不能称为用户明确选择，也不能代替写入或命令权限；unavailable 时不得假定用户作答
+                """;
     }
     @Override public JsonNode schema() {
         ObjectNode root = (ObjectNode) JsonSchema.object().required("questions").build();

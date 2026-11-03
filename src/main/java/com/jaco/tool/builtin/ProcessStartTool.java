@@ -24,11 +24,16 @@ public final class ProcessStartTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "在后台启动长时间运行的非交互命令。"; }
+
+    @Override public String prompt() {
         return "后台启动命令，立即返回 task_id；用 process_poll 查询状态和增量日志，process_stop 停止。"
                 + "适用于长构建、测试或开发服务；命令本身应保持前台运行，不要加 &、start 等再次脱离管理。"
                 + "非交互执行，stdin 关闭；cwd 受启动目录沙箱限制，命令进程本身没有系统级沙箱。"
-                + "最多同时 4 个任务，超时默认 3600 秒、上限 86400；任务仅在当前会话有效，切换会话或退出应用时停止。";
+                + "最多同时 4 个任务，超时默认 3600 秒、上限 86400；任务仅在当前会话有效，切换会话或退出应用时停止。"
+                + "\n" + """
+                - 长时间构建或开发服务用 process_start 后台启动，用 process_poll 的 next_offset 增量读日志，process_stop 停止
+                """;
     }
 
     @Override

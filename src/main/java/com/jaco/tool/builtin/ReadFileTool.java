@@ -43,10 +43,16 @@ public final class ReadFileTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "分页读取 UTF-8 文本，返回行号和完整文件版本。"; }
+
+    @Override public String prompt() {
         return "流式读取 UTF-8 文本，返回行号和完整原始字节的 SHA-256 版本，最大 64 MiB。"
                 + "输出受预算限制，按 next_line/next_column_offset 作为 offset/column_offset 续读。"
-                + "后续分页及 edit_file/write_file 应携带 expected_version；长行可完整续读。";
+                + "后续分页及 edit_file/write_file 应携带 expected_version；长行可完整续读。"
+                + "\n" + """
+                - 修改文件前先 read_file 了解现状；大文件按返回的 next_line/next_column_offset 作为 offset/column_offset 续读，携带 expected_version 防止跨版本分页；limit 是最多读取行数
+                - 修改已有文件必须传 expected_version，使用 read_file 或上次写入返回的文件版本；版本不匹配时重新读取，不能沿用旧版本
+                """;
     }
 
     @Override

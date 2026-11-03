@@ -39,12 +39,19 @@ public final class EditFileTool implements Tool {
 
     @Override public String name() { return "edit_file"; }
 
-    @Override public String description() {
+    @Override public String description() { return "按唯一文本片段局部修改 UTF-8 文件，支持批量修改、版本校验与预览。"; }
+
+    @Override public String prompt() {
         return "局部修改已有 UTF-8 文件，必须先 read_file 并提供 expected_version。"
                 + "使用 old_text/new_text 或 edits 数组（二选一），各项统一在原文中唯一定位，重叠或任意失败均不写入。"
                 + "默认 newline_mode=exact 精确匹配；preserve 只兼容换行差异并保留原文件换行风格，混合换行拒绝。"
                 + "空白、缩进须一致，不含读取行号；new_text 可为空。最多 100 项、文件 16 MiB，单段文本 1 MiB、合计 4 MiB。"
-                + "先展示修改预览，确认后一次原子替换，返回新版本。";
+                + "先展示修改预览，确认后一次原子替换，返回新版本。"
+                + "\n" + """
+                - 修改已有文件优先使用 edit_file；单项 old_text/new_text 与批量 edits 二选一，批量统一基于原文定位且不允许重叠
+                - edit_file 默认精确匹配；read_file 显示的换行已归一，可显式用 newline_mode=preserve 保留原文件换行风格，混合换行须用 exact；空白和缩进仍须一致
+                - edit_file 最大文件 16 MiB、最多 100 项，失败须根据错误重新定位；write_file 用于新建或明确的整文件重写
+                """;
     }
 
     @Override public JsonNode schema() {

@@ -26,7 +26,9 @@ public final class GitDiffTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "只读查看工作区或暂存区的 Git 补丁。"; }
+
+    @Override public String prompt() {
         return "只读查看 Git 补丁。默认比较工作区与暂存区；staged=true 比较暂存区与 HEAD（无首次提交时也支持）。"
                 + "不包含未跟踪文件，忽略子模块内部修改。repo_path 默认工作目录；paths 是相对仓库根的字面路径，不支持 glob。"
                 + "禁用分页器、外部 diff 和文本转换；补丁预览受 max_chars 和工具回填预算限制，完整有界输出通过 archive_id 用 recall 读取。";

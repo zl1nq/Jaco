@@ -27,7 +27,9 @@ public final class WriteFileTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "新建或完整覆盖 UTF-8 文件，支持版本校验与修改预览。"; }
+
+    @Override public String prompt() {
         return "把 content 完整写入文件（整文件覆盖或新建，父目录自动创建，UTF-8 原子写入）。"
                 + "path 必须是非空白字符串，content 必须显式提供字符串（可为空）。"
                 + "覆盖已有文件必须先 read_file，并传入其文件版本作为 expected_version；新建可省略版本。";

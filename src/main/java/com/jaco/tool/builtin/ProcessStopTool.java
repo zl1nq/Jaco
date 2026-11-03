@@ -24,7 +24,9 @@ public final class ProcessStopTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "请求停止指定后台命令。"; }
+
+    @Override public String prompt() {
         return "停止当前会话的后台任务及已发现的子进程，等待清理并返回状态；重复停止已结束任务不会改变其退出结果。"
                 + "若仍在清理会返回 stopping，可用 process_poll 查询；进程树清理尽力执行，不能保证终止自行脱离管理的进程。";
     }

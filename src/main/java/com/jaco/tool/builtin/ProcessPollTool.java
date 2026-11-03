@@ -25,12 +25,17 @@ public final class ProcessPollTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "查询后台命令状态并增量读取日志。"; }
+
+    @Override public String prompt() {
         return "只读查询当前会话后台任务：省略全部参数列出任务，指定 task_id 查询状态、退出码和日志。"
                 + "offset 是整个输出的 UTF-16 字符位置，首次可省略，之后使用 next_offset 避免重复读取。"
                 + "日志缓冲保留末尾 50000 字符；log_gap=true 表示旧日志已淘汰，available_from 给出可读取起点，"
                 + "更早内容可通过 archive_id 用 recall 检索（最多归档前 2000000 字符）。"
-                + "has_more 表示当前还有日志未读，与任务是否结束不同；wait_ms 可等待新输出或结束，取消等待不会停止任务。";
+                + "has_more 表示当前还有日志未读，与任务是否结束不同；wait_ms 可等待新输出或结束，取消等待不会停止任务。"
+                + "\n" + """
+                - process_poll 的 has_more 仅表示还有日志；任务是否结束看 status。普通对话中断不会停止已启动的后台任务，切换会话或退出会清理
+                """;
     }
 
     @Override

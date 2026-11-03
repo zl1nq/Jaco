@@ -12,7 +12,9 @@ public final class TaskCancelTool implements Tool {
 
     public TaskCancelTool(Function<String, String> cancel) { this.cancel = cancel; }
     public String name() { return "task_cancel"; }
-    public String description() { return "请求取消当前会话指定的子任务。返回取消请求回执；用 task_status 确认实际退出。"; }
+    public String description() { return "请求取消指定子任务。"; }
+
+    @Override public String prompt() { return "请求取消当前会话指定的子任务。返回取消请求回执；用 task_status 确认实际退出。"; }
     public JsonNode schema() { return JsonSchema.object().string("task_id", "task 返回的完整任务ID").required("task_id").build(); }
     public String summary(JsonNode args) { return args.path("task_id").asText("?"); }
     public ToolResult execute(JsonNode args, ToolContext ctx) {

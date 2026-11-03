@@ -32,11 +32,16 @@ public final class GitStatusTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "只读查看 Git 工作区及暂存区状态。"; }
+
+    @Override public String prompt() {
         return "只读查看 Git 状态，返回分支描述和 JSON 记录（index_status 为暂存区状态、worktree_status 为工作区状态）。"
                 + "repo_path 默认工作目录，仓库根必须在允许目录内。paths 是相对仓库根的字面路径，不支持 glob。"
                 + "默认包含未跟踪文件；重命名记录包含 original_path。忽略文件和子模块内部修改不展示。"
-                + "结果受 max_entries、输出捕获和回填预算限制，截断会明确提示，可缩小 paths 或通过 recall 读取归档。";
+                + "结果受 max_entries、输出捕获和回填预算限制，截断会明确提示，可缩小 paths 或通过 recall 读取归档。"
+                + "\n" + """
+                - 查看仓库状态用 git_status，查看未暂存或已暂存差异用 git_diff；paths 是相对仓库根的字面路径
+                """;
     }
 
     @Override

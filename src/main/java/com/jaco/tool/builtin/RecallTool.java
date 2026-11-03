@@ -43,7 +43,9 @@ public final class RecallTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "检索当前会话归档或按条目分页读取原文。"; }
+
+    @Override public String prompt() {
         return "检索本会话归档：query 按关键词/Java 正则搜索，offset/limit 对匹配条目分页，"
                 + "返回条目 ID、长度和命中附近预览。"
                 + "读取原文：entry_id 指定搜索返回的 #ID，content_offset/content_limit 按字符分页，保留换行。"

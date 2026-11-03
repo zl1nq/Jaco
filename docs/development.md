@@ -41,3 +41,5 @@ mvn test
 注册表在工具准备前递归校验基础 Schema 约束，不转换错误类型；Schema 默认拒绝未知字段。互斥参数、文件版本等业务条件继续由工具校验。
 
 工具通过 `isReadOnly()`、`requiresConfirmationChannel()`、`isSubagentAllowed()` 声明属性，默认可写、需要确认渠道且禁止子任务。子任务预设和本次允许列表继续收窄工具范围；只读声明不绕过网页等专用授权策略。
+
+`Tool.description()` 提供简短能力描述，`Tool.prompt()` 维护详细用法。注册表按稳定注册顺序装配，子任务仅接收本次可用工具的说明；通用授权规则保留在 agent 系统提示词中。

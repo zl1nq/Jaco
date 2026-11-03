@@ -175,6 +175,10 @@ class AgentRunnerSubagentTest {
             var request = new SubagentRequest("调查", SubagentProfile.EXPLORE, selected);
             selected.add("grep"); // 调用者后续修改不能扩大已创建请求的工具范围。
             assertEquals("报告", agent.runSubagent(request, () -> false).text());
+            String system = client.requests.getFirst().messages().getFirst().content();
+            assertTrue(system.contains("## 工具 read_file"));
+            assertFalse(system.contains("## 工具 grep"));
+            assertFalse(system.contains("## 工具 task\n"));
             assertEquals(List.of("read_file"), client.requests.getFirst().tools().stream()
                     .map(t -> t.function().name()).toList());
             var results = client.requests.get(1).messages().stream().filter(m -> m.role() == Role.TOOL).toList();

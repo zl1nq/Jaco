@@ -30,7 +30,9 @@ public final class ListDirTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "列出单层目录内容。"; }
+
+    @Override public String prompt() {
         return "列出目录内容（不递归），目录以 / 结尾标注。";
     }
 

@@ -13,7 +13,9 @@ public final class TaskStatusTool implements Tool {
 
     public TaskStatusTool(Function<String, String> query) { this.query = query; }
     public String name() { return "task_status"; }
-    public String description() { return "查询当前会话子任务的状态或最终报告。省略 task_id 列出任务；不会阻塞等待。"; }
+    public String description() { return "查询子任务状态或最终报告。"; }
+
+    @Override public String prompt() { return "查询当前会话子任务的状态或最终报告。省略 task_id 列出任务；不会阻塞等待。"; }
     public JsonNode schema() { return JsonSchema.object().string("task_id", "task 返回的完整任务ID；省略列出任务").build(); }
     public String summary(JsonNode args) { return args.path("task_id").asText("全部子任务"); }
     public ToolResult execute(JsonNode args, ToolContext ctx) {

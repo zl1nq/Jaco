@@ -42,6 +42,17 @@ public final class ToolRegistry {
         return defs;
     }
 
+    /** 使用注册顺序装配，子任务范围与工具定义采用相同过滤规则。 */
+    public String prompts(java.util.Set<String> include) {
+        StringBuilder text = new StringBuilder();
+        for (Tool tool : tools.values()) {
+            if (include != null && (!include.contains(tool.name()) || !tool.isSubagentAllowed())) continue;
+            String prompt = tool.prompt();
+            if (!prompt.isBlank()) text.append("\n\n## 工具 ").append(tool.name()).append("\n").append(prompt);
+        }
+        return text.toString();
+    }
+
     /** 参数摘要委托给工具自身，用于终端展示。args 非法时降级为原始字符串。 */
     public String summaryOf(ToolCall call) {
         Tool tool = tools.get(call.function().name());

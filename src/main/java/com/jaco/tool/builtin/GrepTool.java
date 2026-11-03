@@ -34,7 +34,9 @@ public final class GrepTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "按正则或普通文本搜索文件内容。"; }
+
+    @Override public String prompt() {
         return "搜索 UTF-8 文件内容，默认 Java 正则，可用 literal 进行纯文本搜索、ignore_case 忽略大小写。"
                 + "目录递归，默认跳过常见依赖/构建目录，不跟随子项符号链接；include/exclude 支持 glob。"
                 + "输出路径:行号:内容；上下文使用路径-行号-内容，长行围绕命中位置截取并标明列号。"

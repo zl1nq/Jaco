@@ -12,6 +12,9 @@ public interface Tool {
 
     String description();
 
+    /** 装配到系统提示词的详细使用规则，仅随可见工具注入。 */
+    default String prompt() { return ""; }
+
     /** 默认按可写处理；只读不等于无需网络等专用授权。 */
     default boolean isReadOnly() { return false; }
 

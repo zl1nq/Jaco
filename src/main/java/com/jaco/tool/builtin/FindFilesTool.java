@@ -25,10 +25,15 @@ public final class FindFilesTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "按 glob 定位文件。"; }
+
+    @Override public String prompt() {
         return "按 glob 定位文件，返回搜索根下的相对路径；无斜杠匹配文件名，有斜杠匹配相对路径。"
                 + "例如 *.java、**/*Test.java；开头的 **/ 也匹配根目录文件。"
-                + "默认跳过常见依赖/构建目录，不跟随子项符号链接；达到 max_results 提前停止，无分页。";
+                + "默认跳过常见依赖/构建目录，不跟随子项符号链接；达到 max_results 提前停止，无分页。"
+                + "\n" + """
+                - 按文件名或路径定位文件用 find_files，搜索文件内容用 grep，查看单层目录用 list_dir
+                """;
     }
 
     @Override

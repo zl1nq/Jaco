@@ -40,13 +40,20 @@ public final class TaskTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "按预设委派独立子任务，同步返回报告或后台返回回执。"; }
+
+    @Override public String prompt() {
         return "委派一个具有独立上下文的子 agent，返回最终报告。"
                 + "profile 默认 explore（只读调查）；edit 可读写文件，修改会展示预览并遵循宿主权限确认和审计。"
                 + "两种预设都禁止 shell、网络和递归委派；tools 可进一步收窄工具范围，不能扩权。"
                 + "run_in_background 默认 false；仅 explore 可设 true，立即返回任务ID，完成后通知。"
                 + "后台任务用 task_status 查询报告、task_cancel 取消；通知不会自动唤醒模型。"
-                + "适合大范围搜索、代码调研等中间输出很多的场景；子任务的过程不占用本对话上下文。";
+                + "适合大范围搜索、代码调研等中间输出很多的场景；子任务的过程不占用本对话上下文。"
+                + "\n" + """
+                - 委派调查用 task 的 explore 预设（默认）；明确委派文件修改可选择 edit，tools 只能进一步收窄预设工具
+                - edit 子任务会展示修改预览并遵循宿主权限确认，启动 task 的授权不等于文件写入授权；子任务不能执行命令，测试由主任务按授权完成
+                - explore 可设置 run_in_background=true，立即返回任务ID并在完成后通知；使用 task_status 查询结果、task_cancel 取消；通知不会自动发起模型轮次。后台任务不会随主轮次结束或取消而停止，会话切换或退出会清理它
+                """;
     }
 
     @Override

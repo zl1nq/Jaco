@@ -35,12 +35,17 @@ public final class RunCommandTool implements Tool {
     }
 
     @Override
-    public String description() {
+    public String description() { return "执行非交互 shell 命令，返回状态、退出码和有界输出。"; }
+
+    @Override public String prompt() {
         return "执行非交互 shell 命令，标准输入关闭，stdout/stderr 合并。cwd 默认工作目录，启动目录受路径沙箱约束，"
                 + "但命令进程本身没有系统级沙箱。timeout_seconds 默认 120，范围 1-600。"
                 + "encoding 默认 JVM 字符集，Windows 旧程序输出可显式指定 GBK 等编码。"
                 + "返回状态、退出码、耗时和末尾最多 50000 字符；更大的输出最多归档前 2000000 字符，可用 recall 读取。"
-                + "超时、取消和执行结束会尽力清理子进程；不要用于后台服务或交互程序。";
+                + "超时、取消和执行结束会尽力清理子进程；不要用于后台服务或交互程序。"
+                + "\n" + """
+                - run_command 会真实执行命令，命令必须与任务直接相关
+                """;
     }
 
     @Override
