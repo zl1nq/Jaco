@@ -17,6 +17,9 @@ import java.nio.file.InvalidPathException;
 
 /** 严格校验参数后，通过同目录临时文件原子覆盖或新建 UTF-8 文件。 */
 public final class WriteFileTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return true; }
+    @Override public boolean isSubagentAllowed() { return true; }
+
 
     @Override
     public String name() {

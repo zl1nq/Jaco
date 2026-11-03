@@ -285,7 +285,7 @@ class BackgroundProcessManagerTest {
 
     @Test
     void pollIsReadOnlyAndStartAndStopRequireApproval() {
-        PermissionHook permission = new PermissionHook();
+        PermissionHook permission = new PermissionHook(new com.jaco.tool.ToolRegistry(new ProcessPollTool(null)));
         assertTrue(permission.onBeforeToolCall(call("process_poll", "{}")).proceed());
         assertFalse(permission.onBeforeToolCall(call("process_start", "{\"command\":\"echo x\"}")).proceed());
         assertFalse(permission.onBeforeToolCall(call("process_stop", "{\"task_id\":\"x\"}")).proceed());

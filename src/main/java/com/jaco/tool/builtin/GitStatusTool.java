@@ -18,6 +18,10 @@ import java.util.List;
 import java.util.Map;
 
 public final class GitStatusTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+    @Override public boolean isReadOnly() { return true; }
+    @Override public boolean isSubagentAllowed() { return true; }
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int CAPTURE_LIMIT = 200_000;
     private final GitSupport git = new GitSupport();

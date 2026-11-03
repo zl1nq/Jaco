@@ -17,6 +17,12 @@ public final class ToolRegistry {
 
     private final Map<String, Tool> tools = new LinkedHashMap<>();
 
+    public ToolRegistry(Tool... initialTools) {
+        for (Tool tool : initialTools) register(tool);
+    }
+
+    public Tool get(String name) { return tools.get(name); }
+
     public void register(Tool tool) {
         tools.put(tool.name(), tool);
     }
@@ -29,7 +35,7 @@ public final class ToolRegistry {
     public List<ToolDefinition> definitions(java.util.Set<String> include) {
         List<ToolDefinition> defs = new ArrayList<>();
         for (Tool tool : tools.values()) {
-            if (include == null || include.contains(tool.name())) {
+            if (include == null || (include.contains(tool.name()) && tool.isSubagentAllowed())) {
                 defs.add(ToolDefinition.of(tool.name(), tool.description(), tool.schema()));
             }
         }

@@ -161,7 +161,7 @@ class AskUserQuestionTest {
         String result = tool.execute(args(), ctx(new TurnHandle())).text();
         assertEquals("unavailable", JSON.readTree(result).path("status").asText());
         assertTrue(JSON.readTree(result).path("answers").isEmpty());
-        assertTrue(new PermissionHook().onBeforeToolCall(new ToolCall("c", "function",
+        assertTrue(new PermissionHook(new com.jaco.tool.ToolRegistry()).onBeforeToolCall(new ToolCall("c", "function",
                 new ToolCall.FunctionCall("ask_user_question", VALID))).proceed());
         assertFalse(com.jaco.agent.subagent.SubagentProfile.EXPLORE.tools().contains(tool.name()));
         assertFalse(com.jaco.agent.subagent.SubagentProfile.EDIT.tools().contains(tool.name()));

@@ -95,7 +95,7 @@ public final class Main {
                 : config.workspace().extraRoots();
         ToolSandbox sandbox = new ToolSandbox(workspaceRoot, extraRoots);
 
-        PermissionHook permissionHook = new PermissionHook();
+        PermissionHook permissionHook = new PermissionHook(registry);
         OpenAiCompatClient client = new OpenAiCompatClient(provider.chatCompletionsUrl(), provider.apiKey());
         SessionStore sessions = new SessionStore(home.resolve("sessions"));
         AgentRunner agent = new AgentRunner(

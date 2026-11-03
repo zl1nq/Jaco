@@ -6,6 +6,8 @@ import java.util.function.Function;
 
 /** 显式取消子任务，不取消主轮次。 */
 public final class TaskCancelTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+
     private final Function<String, String> cancel;
 
     public TaskCancelTool(Function<String, String> cancel) { this.cancel = cancel; }

@@ -15,6 +15,10 @@ import java.util.List;
 
 /** 按名称或相对路径定位文件，无需执行 shell 命令。 */
 public final class FindFilesTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+    @Override public boolean isReadOnly() { return true; }
+    @Override public boolean isSubagentAllowed() { return true; }
+
     @Override
     public String name() {
         return "find_files";

@@ -10,6 +10,9 @@ import com.jaco.tool.Tool;
 import com.jaco.tool.ToolContext;
 
 public final class ProcessPollTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+    @Override public boolean isReadOnly() { return true; }
+
     private final BackgroundProcessManager manager;
 
     public ProcessPollTool(BackgroundProcessManager manager) {

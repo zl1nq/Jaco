@@ -21,6 +21,10 @@ import java.util.regex.PatternSyntaxException;
 
 /** 搜索当前会话的 JSONL 归档，或按条目 ID 分页读取原文。 */
 public final class RecallTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+    @Override public boolean isReadOnly() { return true; }
+    @Override public boolean isSubagentAllowed() { return true; }
+
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int DEFAULT_LIMIT = 20;

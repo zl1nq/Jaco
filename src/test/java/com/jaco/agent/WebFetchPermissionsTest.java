@@ -39,7 +39,7 @@ class WebFetchPermissionsTest {
 
     @Test
     void sessionApprovalIsScopedToSchemeHostAndPort() throws Exception {
-        PermissionHook permission = new PermissionHook();
+        PermissionHook permission = new PermissionHook(new com.jaco.tool.ToolRegistry());
         assertTrue(answer(permission, call("{\"url\":\"https://example.com/a\"}"), "a").proceed());
         assertTrue(permission.onBeforeToolCall(call("{\"url\":\"https://EXAMPLE.COM:443/b\"}")).proceed());
         assertFalse(permission.onBeforeToolCall(call("{\"url\":\"https://other.example/\"}")).proceed());
@@ -51,7 +51,7 @@ class WebFetchPermissionsTest {
 
     @Test
     void oneTimeApprovalDoesNotPersistAndCachedPagesNeedNoNetworkApproval() throws Exception {
-        PermissionHook permission = new PermissionHook();
+        PermissionHook permission = new PermissionHook(new com.jaco.tool.ToolRegistry());
         ToolCall request = call("{\"url\":\"https://example.com/\"}");
         assertFalse(permission.onBeforeToolCall(request).proceed());
         assertTrue(answer(permission, request, "y").proceed());

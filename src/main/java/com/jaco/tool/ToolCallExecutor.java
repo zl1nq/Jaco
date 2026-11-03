@@ -22,10 +22,11 @@ public final class ToolCallExecutor {
         events.accept(new TurnEvent.ToolCallStart(name, registry.summaryOf(call)));
         try {
             check(ctx);
-            if (allowed != null && !allowed.contains(name)) {
+            Tool tool = registry.get(name);
+            if (allowed != null && (!allowed.contains(name) || tool == null || !tool.isSubagentAllowed())) {
                 return new ToolExecution(ToolExecution.Status.DENIED, "ERROR: 子 agent 本次只允许工具 " + allowed);
             }
-            if (allowed != null && (name.equals("write_file") || name.equals("edit_file"))
+            if (allowed != null && tool.requiresConfirmationChannel()
                     && TurnEventSink.current() == null) {
                 return new ToolExecution(ToolExecution.Status.DENIED, "Permission denied: 没有可用的确认渠道");
             }

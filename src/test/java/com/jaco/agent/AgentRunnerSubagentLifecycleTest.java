@@ -36,6 +36,8 @@ class AgentRunnerSubagentLifecycleTest {
         };
         ToolRegistry registry = new ToolRegistry();
         registry.register(new Tool() {
+            public boolean isSubagentAllowed() { return true; }
+            public boolean requiresConfirmationChannel() { return false; }
             public String name() { return "read_file"; }
             public String description() { return "read"; }
             public JsonNode schema() { return JsonSchema.object().build(); }

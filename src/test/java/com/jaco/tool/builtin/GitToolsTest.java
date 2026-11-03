@@ -305,7 +305,7 @@ class GitToolsTest {
 
     @Test
     void readOnlyGitPathsDoNotTriggerTheCommandDenyList() {
-        PermissionHook permission = new PermissionHook();
+        PermissionHook permission = new PermissionHook(new com.jaco.tool.ToolRegistry(new GitStatusTool(), new GitDiffTool()));
         String args = "{\"paths\":[\"shutdown.txt\",\"reboot.md\"]}";
         assertTrue(permission.onBeforeToolCall(call("git_status", args)).proceed());
         assertTrue(permission.onBeforeToolCall(call("git_diff", args)).proceed());

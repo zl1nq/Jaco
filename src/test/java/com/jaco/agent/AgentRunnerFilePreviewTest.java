@@ -62,7 +62,7 @@ class AgentRunnerFilePreviewTest {
         registry.register(new WriteFileTool());
         registry.register(new EditFileTool());
         AgentRunner agent = new AgentRunner(client, new ProviderConfig("http://localhost", "k", "m", null),
-                null, new SessionStore(tmp.resolve("sessions")), new HookChain(List.of(new PermissionHook())),
+                null, new SessionStore(tmp.resolve("sessions")), new HookChain(List.of(new PermissionHook(new com.jaco.tool.ToolRegistry()))),
                 registry, new ToolSandbox(tmp, List.of()), tmp, "auto", 25, 100_000, 8000);
         agent.start();
         return agent;

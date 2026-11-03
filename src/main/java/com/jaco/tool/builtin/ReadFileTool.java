@@ -29,6 +29,10 @@ import java.util.Set;
 
 /** 流式扫描完整 UTF-8 文件计算版本，仅保留本页内容。 */
 public final class ReadFileTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+    @Override public boolean isReadOnly() { return true; }
+    @Override public boolean isSubagentAllowed() { return true; }
+
     static final long MAX_FILE_BYTES = 64L * 1024 * 1024;
     private static final int METADATA_RESERVE = 512;
     private static final Set<String> FIELDS = Set.of("path", "offset", "limit", "column_offset", "expected_version");

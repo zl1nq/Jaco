@@ -92,7 +92,7 @@ class AgentRunnerSessionPermissionsTest {
 
     @Test
     void newSessionRequiresApprovalAgain() throws Exception {
-        PermissionHook permission = new PermissionHook();
+        PermissionHook permission = new PermissionHook(new com.jaco.tool.ToolRegistry(new com.jaco.tool.builtin.ReadFileTool()));
         AgentRunner agent = runner(permission);
         allowForSession(permission);
 
@@ -104,7 +104,7 @@ class AgentRunnerSessionPermissionsTest {
 
     @Test
     void switchingAndReturningRequireFreshApproval() throws Exception {
-        PermissionHook permission = new PermissionHook();
+        PermissionHook permission = new PermissionHook(new com.jaco.tool.ToolRegistry(new com.jaco.tool.builtin.ReadFileTool()));
         AgentRunner agent = runner(permission);
         allowForSession(permission);
 
@@ -119,7 +119,7 @@ class AgentRunnerSessionPermissionsTest {
 
     @Test
     void unsuccessfulSwitchesPreserveApproval() throws Exception {
-        PermissionHook permission = new PermissionHook();
+        PermissionHook permission = new PermissionHook(new com.jaco.tool.ToolRegistry(new com.jaco.tool.builtin.ReadFileTool()));
         AgentRunner agent = runner(permission);
         allowForSession(permission);
 

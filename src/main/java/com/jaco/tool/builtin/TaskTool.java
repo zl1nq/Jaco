@@ -20,6 +20,8 @@ import java.util.function.BooleanSupplier;
  * Handler 由 Main 在 AgentRunner 构造后绑定（registry 先于 runner 存在，晚接线）。
  */
 public final class TaskTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+
 
     /** 由 AgentRunner 实现：按请求同步等待报告，或返回后台任务回执。 */
     public interface Handler {

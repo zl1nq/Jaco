@@ -26,6 +26,9 @@ import java.util.Set;
 
 /** 同一原文中定位唯一、不重叠的片段，一次预览后原子替换。 */
 public final class EditFileTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return true; }
+    @Override public boolean isSubagentAllowed() { return true; }
+
     static final int MAX_FILE_BYTES = 16 * 1024 * 1024;
     static final int MAX_TEXT_BYTES = 1024 * 1024;
     static final int MAX_TOTAL_TEXT_BYTES = 4 * 1024 * 1024;

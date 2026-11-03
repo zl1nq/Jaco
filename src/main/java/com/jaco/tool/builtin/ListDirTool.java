@@ -17,6 +17,10 @@ import java.util.stream.Stream;
 
 /** 列出目录内容。 */
 public final class ListDirTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+    @Override public boolean isReadOnly() { return true; }
+    @Override public boolean isSubagentAllowed() { return true; }
+
 
     private static final int MAX_ENTRIES = 500;
 

@@ -25,6 +25,8 @@ import java.util.concurrent.TimeUnit;
 
 /** 非交互命令执行：有界输出、可配置超时、取消与进程树清理。 */
 public final class RunCommandTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+
     private volatile String autoShell;
 
     @Override

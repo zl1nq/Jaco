@@ -6,6 +6,9 @@ import java.util.function.Function;
 
 /** 读取当前会话的子任务状态及最终报告；不会等待任务完成。 */
 public final class TaskStatusTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+    @Override public boolean isReadOnly() { return true; }
+
     private final Function<String, String> query;
 
     public TaskStatusTool(Function<String, String> query) { this.query = query; }

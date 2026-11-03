@@ -10,6 +10,8 @@ import com.jaco.tool.Tool;
 import com.jaco.tool.ToolContext;
 
 public final class ProcessStopTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+
     private final BackgroundProcessManager manager;
 
     public ProcessStopTool(BackgroundProcessManager manager) {

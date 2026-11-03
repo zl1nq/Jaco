@@ -12,6 +12,15 @@ public interface Tool {
 
     String description();
 
+    /** 默认按可写处理；只读不等于无需网络等专用授权。 */
+    default boolean isReadOnly() { return false; }
+
+    /** 子任务没有确认渠道时，默认拒绝执行。 */
+    default boolean requiresConfirmationChannel() { return true; }
+
+    /** 仅显式声明的工具可供子任务使用，仍须通过预设和调用允许列表。 */
+    default boolean isSubagentAllowed() { return false; }
+
     /** JSON Schema（object 类型），描述 execute 接受的参数。 */
     JsonNode schema();
 

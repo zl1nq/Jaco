@@ -40,7 +40,10 @@ public final class PermissionHook implements AgentHook {
             Pattern.compile("\\b(shutdown|reboot|poweroff)\\b"),
             Pattern.compile(":\\(\\)\\s*\\{\\s*:\\|:&\\s*\\};:"));              // fork bomb
 
-    private static final Set<String> READ_ONLY = Set.of("read_file", "list_dir", "grep", "find_files", "recall", "process_poll", "git_status", "git_diff", "task_status");
+    private final ToolRegistry registry;
+
+    public PermissionHook(ToolRegistry registry) { this.registry = registry; }
+
 
     private final Set<String> sessionAllowed = ConcurrentHashMap.newKeySet();
     private long generation;
@@ -67,7 +70,7 @@ public final class PermissionHook implements AgentHook {
                 }
             }
         }
-        if (READ_ONLY.contains(name) || sessionAllowed.contains(name)) {
+        if ((registry.get(name) != null && registry.get(name).isReadOnly()) || sessionAllowed.contains(name)) {
             return HookVerdict.allow();
         }
         return askUser(call, name);

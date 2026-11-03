@@ -98,7 +98,7 @@ class FindFilesToolTest {
     @Test
     void readOnlyToolDoesNotNeedApproval() {
         ToolCall call = new ToolCall("id", "function", new ToolCall.FunctionCall("find_files", "{\"pattern\":\"*.java\"}"));
-        assertTrue(new PermissionHook().onBeforeToolCall(call).proceed());
+        assertTrue(new PermissionHook(new com.jaco.tool.ToolRegistry(new FindFilesTool())).onBeforeToolCall(call).proceed());
     }
 
     @Test

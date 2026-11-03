@@ -175,7 +175,7 @@ public final class SubagentRunner {
         for (ToolCall call : calls) {
             String name = call.function().name();
             TurnEventSink sink = TurnEventSink.current();
-            Consumer<TurnEvent> events = sink != null && ("write_file".equals(name) || "edit_file".equals(name))
+            Consumer<TurnEvent> events = sink != null && registry.get(name) != null && registry.get(name).requiresConfirmationChannel()
                     ? sink::emit : e -> { };
             ToolExecution execution = executor.execute(call, ctx, tools, events);
             String result = support.gateToolResult(child, execution.result());

@@ -14,6 +14,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class GitDiffTool implements Tool {
+    @Override public boolean requiresConfirmationChannel() { return false; }
+    @Override public boolean isReadOnly() { return true; }
+    @Override public boolean isSubagentAllowed() { return true; }
+
     private final GitSupport git = new GitSupport();
 
     @Override

@@ -65,7 +65,7 @@ class AgentRunnerSubagentEditTest {
             registry.register(new EditFileTool());
             TaskTool task = new TaskTool();
             registry.register(task);
-            List<AgentHook> hooks = new ArrayList<>(List.of(new PermissionHook(), new AgentHook() {
+            List<AgentHook> hooks = new ArrayList<>(List.of(new PermissionHook(new com.jaco.tool.ToolRegistry()), new AgentHook() {
                 @Override public void onToolCompleted(ToolCall call, ToolExecution execution) {
                     if (TurnEventSink.current() != null && TurnEventSink.current().taskId() != null) {
                         completions.add(execution);
