@@ -41,9 +41,9 @@ public final class AskUserQuestionTool implements Tool, AgentHook, AutoCloseable
         questions.put("type", "array").put("minItems", 1).put("maxItems", 3);
         ObjectNode question = (ObjectNode) JsonSchema.object()
                 .string("id", "唯一问题 ID，1～64 位字母、数字、下划线或连字符")
-                .string("header", "可选短标题，最多 40 字符")
-                .string("question", "完整问题，最多 1000 字符")
-                .string("recommendation_reason", "有选项时必填，解释推荐原因，最多 300 字符")
+                .string("header", "可选短标题，最多 40 字符", 0, 40)
+                .string("question", "完整问题，最多 1000 字符", 1, 1000)
+                .string("recommendation_reason", "有选项时必填，解释推荐原因，最多 300 字符", 0, 300)
                 .bool("multi_select", "第一版仅支持 false，默认 false")
                 .required("id", "question").build();
         question.put("additionalProperties", false);
@@ -51,7 +51,7 @@ public final class AskUserQuestionTool implements Tool, AgentHook, AutoCloseable
         ObjectNode options = question.withObject("/properties").putObject("options");
         options.put("type", "array").put("minItems", 2).put("maxItems", 5);
         ObjectNode option = (ObjectNode) JsonSchema.object().string("id", "本题唯一选项 ID")
-                .string("label", "选项名称，最多 100 字符").string("description", "可选说明，最多 300 字符")
+                .string("label", "选项名称，最多 100 字符").string("description", "可选说明，最多 300 字符", 0, 300)
                 .bool("recommended", "恰好一个选项为 true；省略为 false").required("id", "label").build();
         option.put("additionalProperties", false);
         options.set("items", option);

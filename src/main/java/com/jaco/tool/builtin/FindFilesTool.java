@@ -32,7 +32,7 @@ public final class FindFilesTool implements Tool {
         return JsonSchema.object()
                 .string("pattern", "文件名或相对路径 glob，如 **/*Tool.java")
                 .string("path", "搜索目录或文件，默认工作目录")
-                .integer("max_results", "结果上限，默认 100，范围 1-1000")
+                .integer("max_results", "结果上限，默认 100，范围 1-1000", 1, 1000)
                 .strings("exclude", "额外排除文件或目录的 glob 数组")
                 .bool("include_ignored", "是否搜索默认排除目录，默认 false；不影响 exclude")
                 .required("pattern").build();

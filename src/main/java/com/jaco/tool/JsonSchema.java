@@ -18,6 +18,7 @@ public final class JsonSchema {
 
     private JsonSchema() {
         root.put("type", "object");
+        root.put("additionalProperties", false);
         root.set("properties", properties);
     }
 
@@ -31,6 +32,18 @@ public final class JsonSchema {
 
     public JsonSchema integer(String name, String description) {
         return typed(name, "integer", description);
+    }
+
+    public JsonSchema integer(String name, String description, long min, long max) {
+        integer(name, description);
+        ((ObjectNode) properties.get(name)).put("minimum", min).put("maximum", max);
+        return this;
+    }
+
+    public JsonSchema string(String name, String description, int minLength, int maxLength) {
+        string(name, description);
+        ((ObjectNode) properties.get(name)).put("minLength", minLength).put("maxLength", maxLength);
+        return this;
     }
 
     public JsonSchema bool(String name, String description) {

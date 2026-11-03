@@ -34,8 +34,8 @@ public final class GitDiffTool implements Tool {
                 .string("repo_path", "仓库或其子目录，默认工作目录")
                 .strings("paths", "可选，最多 100 个相对仓库根的字面路径")
                 .bool("staged", "是否查看暂存区差异，默认 false")
-                .integer("context_lines", "补丁上下文行数，默认 3，范围 0-20")
-                .integer("max_chars", "最多预览的补丁字符数，默认 8000，范围 1000-50000，也受工具回填预算限制").build();
+                .integer("context_lines", "补丁上下文行数，默认 3，范围 0-20", 0, 20)
+                .integer("max_chars", "最多预览的补丁字符数，默认 8000，范围 1000-50000，也受工具回填预算限制", 1000, 50000).build();
         schema.put("additionalProperties", false);
         return schema;
     }

@@ -93,8 +93,8 @@ public final class WebFetchTool implements Tool, AgentHook, AutoCloseable {
         ObjectNode schema = (ObjectNode) JsonSchema.object()
                 .string("url", "首次抓取的公共 HTTP/HTTPS URL，最多 2048 字符；不能与 fetch_id 同时使用")
                 .string("fetch_id", "读取已抓取快照的 ID；不能与 url 同时使用")
-                .integer("offset", "正文字符偏移（Java UTF-16 单位），默认 0，后续使用 next_offset")
-                .integer("limit", "最多读取正文字符数，默认 8000，范围 1-20000，同时受工具回填预算限制")
+                .integer("offset", "正文字符偏移（Java UTF-16 单位），默认 0，后续使用 next_offset", 0, 500000)
+                .integer("limit", "最多读取正文字符数，默认 8000，范围 1-20000，同时受工具回填预算限制", 1, 20000)
                 .build();
         schema.put("additionalProperties", false);
         return schema;

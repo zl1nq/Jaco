@@ -34,9 +34,9 @@ public final class ProcessPollTool implements Tool {
     public JsonNode schema() {
         ObjectNode schema = (ObjectNode) JsonSchema.object()
                 .string("task_id", "process_start 返回的 ID；省略全部参数可列出任务")
-                .integer("offset", "整个输出的字符偏移，默认 0；后续传返回的 next_offset")
-                .integer("limit", "最多读取字符数，默认 2000，范围 1-10000，也受工具回填预算限制")
-                .integer("wait_ms", "无新日志时最多等待毫秒数，默认 0，范围 0-10000")
+                .integer("offset", "整个输出的字符偏移，默认 0；后续传返回的 next_offset", 0, 2147483647)
+                .integer("limit", "最多读取字符数，默认 2000，范围 1-10000，也受工具回填预算限制", 1, 10000)
+                .integer("wait_ms", "无新日志时最多等待毫秒数，默认 0，范围 0-10000", 0, 10000)
                 .build();
         schema.put("additionalProperties", false);
         return schema;

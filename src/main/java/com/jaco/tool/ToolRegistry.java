@@ -65,6 +65,7 @@ public final class ToolRegistry {
         } catch (Exception e) {
             throw new ToolException("参数不是合法 JSON: " + e.getMessage());
         }
+        ToolArguments.validate(args, tool.schema());
         return tool.prepare(args, ctx);
     }
 }

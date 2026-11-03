@@ -48,7 +48,9 @@ public final class ListDirTool implements Tool {
     }
 
     private String executeText(JsonNode args, ToolContext ctx) throws IOException {
-        Path dir = ctx.sandbox().resolve(args.path("path").asText("."));
+        SearchSupport.validate(args, "path");
+        String path = SearchSupport.string(args, "path", ".");
+        Path dir = ctx.sandbox().resolve(path);
         if (!Files.isDirectory(dir)) {
             throw new ToolException("不是目录: " + dir);
         }

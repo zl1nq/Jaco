@@ -49,9 +49,9 @@ public final class ReadFileTool implements Tool {
     public JsonNode schema() {
         return JsonSchema.object()
                 .string("path", "文件路径（相对于工作目录或绝对路径）")
-                .integer("offset", "起始行号，从 1 开始，默认 1")
-                .integer("limit", "最多读取行数，默认 2000，上限 20000；受输出预算限制")
-                .integer("column_offset", "起始行内字符偏移，从 0 开始，按 UTF-16 单位；后续行从 0 开始")
+                .integer("offset", "起始行号，从 1 开始，默认 1", 1, 2147483647)
+                .integer("limit", "最多读取行数，默认 2000，上限 20000；受输出预算限制", 1, 20000)
+                .integer("column_offset", "起始行内字符偏移，从 0 开始，按 UTF-16 单位；后续行从 0 开始", 0, 2147483647)
                 .string("expected_version", "可选：首次读取返回的 sha256: 版本，拒绝跨版本分页")
                 .required("path").build();
     }

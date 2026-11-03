@@ -46,7 +46,7 @@ public final class RunCommandTool implements Tool {
         ObjectNode schema = (ObjectNode) JsonSchema.object()
                 .string("command", "要执行的非空白命令行")
                 .string("cwd", "启动目录，默认工作目录，必须位于允许的目录内")
-                .integer("timeout_seconds", "超时秒数，默认 120，范围 1-600")
+                .integer("timeout_seconds", "超时秒数，默认 120，范围 1-600", 1, 600)
                 .string("encoding", "输出字符集，如 UTF-8、GBK，默认 JVM 字符集；不会改变子进程的输出编码")
                 .required("command").build();
         schema.put("additionalProperties", false);

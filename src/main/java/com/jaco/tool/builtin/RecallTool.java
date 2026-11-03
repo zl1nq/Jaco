@@ -50,11 +50,11 @@ public final class RecallTool implements Tool {
     public JsonNode schema() {
         return JsonSchema.object()
                 .string("query", "关键词或 Java 正则；省略则搜索全部条目")
-                .integer("offset", "搜索结果列表偏移（0 起），不是内容字符偏移")
-                .integer("limit", "搜索最多返回条数，默认 20，上限 100；也受输出预算限制")
-                .integer("entry_id", "读取模式：归档条目 #ID（0 起）；不要同时传 query/offset/limit")
-                .integer("content_offset", "读取模式：原文字符偏移（0 起，Java UTF-16 单位），默认 0")
-                .integer("content_limit", "读取模式：最多读取字符数，默认 2000；按输出预算自动缩小")
+                .integer("offset", "搜索结果列表偏移（0 起），不是内容字符偏移", 0, 2147483647)
+                .integer("limit", "搜索最多返回条数，默认 20，上限 100；也受输出预算限制", 1, 100)
+                .integer("entry_id", "读取模式：归档条目 #ID（0 起）；不要同时传 query/offset/limit", 0, 2147483647)
+                .integer("content_offset", "读取模式：原文字符偏移（0 起，Java UTF-16 单位），默认 0", 0, 2147483647)
+                .integer("content_limit", "读取模式：最多读取字符数，默认 2000；按输出预算自动缩小", 1, 2147483647)
                 .build();
     }
 

@@ -47,8 +47,8 @@ public final class GrepTool implements Tool {
                 .bool("include_ignored", "是否搜索默认排除目录，默认 false；不影响 exclude")
                 .bool("literal", "按普通文本搜索，默认 false")
                 .bool("ignore_case", "忽略大小写，默认 false")
-                .integer("context_lines", "命中行前后上下文行数，默认 0，范围 0-10")
-                .integer("max_results", "命中行上限，默认 100，范围 1-1000")
+                .integer("context_lines", "命中行前后上下文行数，默认 0，范围 0-10", 0, 10)
+                .integer("max_results", "命中行上限，默认 100，范围 1-1000", 1, 1000)
                 .required("pattern").build();
     }
 

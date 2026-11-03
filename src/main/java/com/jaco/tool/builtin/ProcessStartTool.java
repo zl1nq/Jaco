@@ -34,7 +34,7 @@ public final class ProcessStartTool implements Tool {
         ObjectNode schema = (ObjectNode) JsonSchema.object()
                 .string("command", "非空白命令行，不要让命令再次自行后台化")
                 .string("cwd", "启动目录，默认工作目录，必须位于允许范围内")
-                .integer("timeout_seconds", "最大运行秒数，默认 3600，范围 1-86400")
+                .integer("timeout_seconds", "最大运行秒数，默认 3600，范围 1-86400", 1, 86400)
                 .string("encoding", "输出解码字符集，如 UTF-8、GBK，默认 JVM 字符集")
                 .required("command").build();
         schema.put("additionalProperties", false);

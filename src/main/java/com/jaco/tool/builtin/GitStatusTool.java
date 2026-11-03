@@ -41,7 +41,7 @@ public final class GitStatusTool implements Tool {
                 .string("repo_path", "仓库或其子目录，默认工作目录")
                 .strings("paths", "可选，最多 100 个相对仓库根的字面路径")
                 .bool("include_untracked", "是否包含未跟踪文件，默认 true")
-                .integer("max_entries", "最多返回状态记录数，默认 200，范围 1-1000").build();
+                .integer("max_entries", "最多返回状态记录数，默认 200，范围 1-1000", 1, 1000).build();
         schema.put("additionalProperties", false);
         return schema;
     }
