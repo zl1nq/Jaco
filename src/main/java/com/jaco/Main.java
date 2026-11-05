@@ -46,6 +46,8 @@ public final class Main {
         Path home = home();
         System.setProperty("jaco.home", home.toString());
 
+        printStartupBanner();
+
         JacoConfig config = ConfigLoader.load(home);
         if (config == null) {
             printSetupGuide(home);
@@ -143,6 +145,19 @@ public final class Main {
                 // JVM 正在退出，清理钩子可能已开始；close 可以重复调用。
             }
         }
+    }
+
+    private static void printStartupBanner() {
+        System.out.println("""
+
+                   (_) __ _  ___ ___
+                   | |/ _` |/ __/ _ \\
+                   | | (_| | (_| (_) |
+                  _/ |\\__,_|\\___\\___/
+                 |__/
+
+                 github.com/zl1nq/jaco
+                """);
     }
 
     /** 数据目录：JACO_HOME 环境变量优先，默认 ~/.jaco。 */
