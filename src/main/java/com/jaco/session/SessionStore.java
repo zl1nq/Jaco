@@ -103,6 +103,25 @@ public final class SessionStore {
         }
     }
 
+    /** 工作流可能在工具批次中保存；恢复时只保留已配对完成的消息前缀。 */
+    public void saveWorkflow(Session session) {
+        var messages = new ArrayList<>(session.messages());
+        for (int i = 0; i < messages.size(); i++) {
+            Message message = messages.get(i);
+            if (message.toolCalls() == null || message.toolCalls().isEmpty()) continue;
+            var pending = new java.util.HashSet<String>();
+            for (var call : message.toolCalls()) pending.add(call.id());
+            int end = i + 1;
+            while (end < messages.size() && messages.get(end).role() == com.jaco.llm.Role.TOOL) {
+                pending.remove(messages.get(end).toolCallId());
+                end++;
+            }
+            if (!pending.isEmpty()) { messages.subList(i, messages.size()).clear(); break; }
+            i = end - 1;
+        }
+        save(new Session(session.id(), session.createdAt(), messages, session.compactedToolCallIds(), session.title(), session.workflow()));
+    }
+
     /** 删除单个会话及归档；只接受完整 ID，不允许删除目录或跟随符号链接。 */
     public boolean delete(String id) throws IOException {
         if (id == null || !id.matches("[A-Za-z0-9._-]+")) {

@@ -24,6 +24,9 @@ public interface Tool {
     /** 仅显式声明的工具可供子任务使用，仍须通过预设和调用允许列表。 */
     default boolean isSubagentAllowed() { return false; }
 
+    enum PermissionCategory { STANDARD, SESSION_STATE }
+    default PermissionCategory permissionCategory() { return PermissionCategory.STANDARD; }
+
     enum OutputPolicy { ARCHIVE_PREVIEW, PAGINATED }
 
     /** 分页工具必须自行保留预算内完整的续读元数据。 */

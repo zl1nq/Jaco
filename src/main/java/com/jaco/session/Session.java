@@ -10,7 +10,11 @@ import java.util.Set;
 
 /** 会话消息及已压缩工具结果的调用 ID；元数据随会话保存，不进入模型请求。 */
 public record Session(String id, long createdAt, List<Message> messages,
-                      Set<String> compactedToolCallIds, String title) {
+                      Set<String> compactedToolCallIds, String title, SessionWorkflow workflow) {
+
+    public Session(String id, long createdAt, List<Message> messages, Set<String> compactedToolCallIds, String title) {
+        this(id, createdAt, messages, compactedToolCallIds, title, new SessionWorkflow(null));
+    }
 
     public Session(String id, long createdAt, List<Message> messages, Set<String> compactedToolCallIds) {
         this(id, createdAt, messages, compactedToolCallIds, null);
@@ -25,6 +29,7 @@ public record Session(String id, long createdAt, List<Message> messages,
     }
 
     public Session {
+        workflow = workflow == null ? new SessionWorkflow(null) : workflow;
         messages = messages instanceof ArrayList<Message> ? messages : new ArrayList<>(messages);
         compactedToolCallIds = compactedToolCallIds == null
                 ? new HashSet<>() : new HashSet<>(compactedToolCallIds);
@@ -46,7 +51,7 @@ public record Session(String id, long createdAt, List<Message> messages,
         }
         String candidate = titleFrom(prompt);
         return candidate.isEmpty() ? this
-                : new Session(id, createdAt, messages, compactedToolCallIds, candidate);
+                : new Session(id, createdAt, messages, compactedToolCallIds, candidate, workflow);
     }
 
     public String displayTitle() {

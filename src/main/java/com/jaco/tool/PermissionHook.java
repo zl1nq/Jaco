@@ -51,6 +51,8 @@ public final class PermissionHook implements AgentHook {
     @Override
     public HookVerdict onBeforeToolCall(ToolCall call) {
         String name = call.function().name();
+        Tool tool = registry.get(name);
+        if (tool != null && tool.permissionCategory() == Tool.PermissionCategory.SESSION_STATE) return HookVerdict.allow();
         if (name.equals("ask_user_question")) return HookVerdict.allow();
         if (name.equals("web_fetch")) {
             try {

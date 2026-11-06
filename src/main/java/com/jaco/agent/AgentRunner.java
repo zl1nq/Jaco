@@ -177,6 +177,8 @@ public final class AgentRunner implements AutoCloseable {
         return session;
     }
 
+    public String todos() { return session.workflow().renderTodos(); }
+
     public String modelName() {
         return provider.model();
     }
@@ -693,7 +695,9 @@ public final class AgentRunner implements AutoCloseable {
     /** 串行执行工具；每个 tool_call 都必须产生 tool result（协议要求成对）。 */
     private void executeTools(List<ToolCall> calls, TurnHandle handle, Session owner) {
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
-                handle.processRef(), handle::isCancelled, sessions.archivePath(owner), maxToolResultChars);
+                handle.processRef(), handle::isCancelled, sessions.archivePath(owner), maxToolResultChars,
+                new com.jaco.session.WorkflowService(owner, sessions,
+                        () -> session.workflow() == owner.workflow() && !handle.isCancelled()));
         var executor = new ToolCallExecutor(registry, hooks);
         for (ToolCall call : calls) {
             var execution = executor.execute(call, ctx, null, handle::emit);
@@ -710,7 +714,7 @@ public final class AgentRunner implements AutoCloseable {
 
     private List<Message> buildMessages(Session owner) {
         List<Message> messages = new ArrayList<>();
-        messages.add(Message.system(buildSystemPrompt()));
+        messages.add(Message.system(buildSystemPrompt() + "\n\n当前主会话进度：\n" + owner.workflow().renderTodos()));
         messages.addAll(owner.messages());
         return messages;
     }

@@ -57,6 +57,10 @@ public final class ConsoleApp {
     }
 
     private void registerCommands() {
+        commands.put("todos", new Command.Simple("todos", "查看当前会话任务清单", args -> {
+            println(args.isBlank() ? agent.todos() : "用法：/todos");
+            return true;
+        }));
         commands.put("paste", new Command.Simple("paste", "多行粘贴兼容模式：独立一行 /end 结束，Ctrl+C 取消", args -> {
             if (!args.isBlank()) { println("用法：/paste"); return true; }
             collectPaste();
@@ -604,7 +608,7 @@ public final class ConsoleApp {
             return;
         }
         String command = line.split("\\s+", 2)[0];
-        if (command.equals("/subagents") || command.equals("/help")) {
+        if (command.equals("/subagents") || command.equals("/help") || command.equals("/todos")) {
             dispatch(line);
         } else if (line.equals("/cancel")) {
             handle.cancel();
