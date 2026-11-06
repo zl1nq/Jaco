@@ -25,6 +25,8 @@ public final class ToolCallExecutor {
             Tool tool = registry.get(name);
             if (ctx.workflow() != null && ctx.workflow().planning() && tool != null && !tool.isAllowedInPlan())
                 return new ToolExecution(ToolExecution.Status.DENIED, "计划模式禁止工具: " + name);
+            if (tool != null && tool.isPlanOnly() && (ctx.workflow() == null || !ctx.workflow().planning()))
+                return new ToolExecution(ToolExecution.Status.DENIED, "工具仅在计划模式可用: " + name);
             if (allowed != null && (!allowed.contains(name) || tool == null || !tool.isSubagentAllowed())) {
                 return new ToolExecution(ToolExecution.Status.DENIED, "ERROR: 子 agent 本次只允许工具 " + allowed);
             }

@@ -58,7 +58,7 @@ public final class ConsoleApp {
 
     private void registerCommands() {
         commands.put("plan", new Command.Simple("plan", "进入或查看计划模式", args -> {
-            println(args.isBlank() ? agent.plan() : "用法：/plan");
+            println(args.isBlank() ? agent.plan() : args.strip().equals("cancel") ? agent.cancelPlan() : "用法：/plan [cancel]");
             return true;
         }));
         commands.put("todos", new Command.Simple("todos", "查看当前会话任务清单", args -> {
@@ -437,6 +437,20 @@ public final class ConsoleApp {
                         terminal.enterRawMode();
                         rawPasteMode(true);
                     }
+                } else if (event instanceof TurnEvent.PlanApprovalRequest plan) {
+                    if (plan.active().getAsBoolean()) {
+                        if (!input.isEmpty()) {
+                            deferredRequests.addLast(plan);
+                            println(ANSI_DIM + "（计划等待确认，请先提交当前输入或按 Ctrl+U 清空）" + ANSI_RESET);
+                        } else {
+                            spinner.stop();
+                            sawOutput = true;
+                            flushPending(renderer, pending);
+                            terminal.setAttributes(savedAttributes);
+                            try { askPlanApproval(plan, handle); }
+                            finally { terminal.enterRawMode(); rawPasteMode(true); }
+                        }
+                    }
                 } else if (event instanceof TurnEvent.QuestionRequest question) {
                     if (question.active().getAsBoolean()) {
                         if (!input.isEmpty()) {
@@ -625,6 +639,25 @@ public final class ConsoleApp {
         if (terminal.getType() != null && !terminal.getType().startsWith("dumb")) {
             terminal.writer().print(enabled ? "\033[?2004h" : "\033[?2004l");
             terminal.writer().flush();
+        }
+    }
+
+    private void askPlanApproval(TurnEvent.PlanApprovalRequest plan, TurnHandle handle) {
+        println("待批准计划：");
+        println(plan.markdown().replaceAll("[\\p{Cntrl}&&[^\\n\\t]]", ""));
+        while (plan.active().getAsBoolean() && !handle.isCancelled()) {
+            try {
+                String answer = reader.readLine("批准此计划？[y 同意 / n 拒绝] ").strip().toLowerCase(java.util.Locale.ROOT);
+                if (!plan.active().getAsBoolean() || handle.isCancelled()) return;
+                if (answer.equals("y") || answer.equals("n")) {
+                    plan.resolver().accept(answer.equals("y"));
+                    return;
+                }
+                println("请输入 y 或 n；空输入及会话自动授权不能批准计划。");
+            } catch (org.jline.reader.UserInterruptException | org.jline.reader.EndOfFileException e) {
+                handle.cancel();
+                return;
+            }
         }
     }
 

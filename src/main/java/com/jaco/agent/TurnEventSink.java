@@ -58,6 +58,8 @@ public final class TurnEventSink {
         return binding;
     }
 
+    public String turnId() { return handle.id(); }
+
     public String taskId() { return taskId; }
 
     public static final class Binding implements AutoCloseable {

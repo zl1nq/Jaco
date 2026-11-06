@@ -654,4 +654,23 @@ class ConsoleAppRunningCommandTest {
             assertTrue(console.text().contains("已取消粘贴"));
         }
     }
+    @Test void planConfirmationShowsFullDraftAndRequiresExplicitAnswer() throws Exception {
+        try (var agent = agent(null, new ToolRegistry())) {
+            Console console = new Console();
+            var answers = new ArrayDeque<>(List.of("", "a", "y"));
+            console.readLine = args -> answers.remove();
+            var handle = new TurnHandle();
+            var approved = new AtomicBoolean();
+            String draft = "# 计划\n" + "完整内容".repeat(2000) + "\n末尾验收";
+            TestTurnEvents.emit(handle, new TurnEvent.PlanApprovalRequest("s", handle.id(), 1, draft, answer -> {
+                approved.set(answer);
+                TestTurnEvents.emit(handle, new TurnEvent.Done(null, "stop", false, false, null, 1));
+            }, () -> true));
+            assertTimeoutPreemptively(Duration.ofSeconds(3), () -> console.app(agent).consumeTurn(handle));
+            assertTrue(approved.get());
+            assertTrue(answers.isEmpty());
+            assertTrue(console.text().contains(draft));
+            assertTrue(console.text().contains("请输入 y 或 n"));
+        }
+    }
 }

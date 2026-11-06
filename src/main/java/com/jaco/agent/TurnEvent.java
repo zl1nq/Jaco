@@ -38,6 +38,10 @@ public sealed interface TurnEvent {
                            Consumer<com.jaco.tool.UserQuestion.Submission> resolver,
                            java.util.function.BooleanSupplier active) implements TurnEvent {}
 
+    /** 独立于工具授权和提问的计划确认；必须明确同意或拒绝，不支持会话自动批准。 */
+    record PlanApprovalRequest(String sessionId, String turnId, long revision, String markdown,
+                               Consumer<Boolean> resolver, java.util.function.BooleanSupplier active) implements TurnEvent {}
+
     /** 非正文的状态提示（如上下文压缩进度）。 */
     record Notice(String text) implements TurnEvent {
     }

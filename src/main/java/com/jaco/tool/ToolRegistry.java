@@ -38,7 +38,7 @@ public final class ToolRegistry {
     public List<ToolDefinition> definitions(java.util.Set<String> include, boolean planning) {
         List<ToolDefinition> defs = new ArrayList<>();
         for (Tool tool : tools.values()) {
-            if (planning && !tool.isAllowedInPlan()) continue;
+            if (planning ? !tool.isAllowedInPlan() : tool.isPlanOnly()) continue;
             if (include == null || (include.contains(tool.name()) && tool.isSubagentAllowed())) {
                 defs.add(ToolDefinition.of(tool.name(), tool.description(), tool.schema()));
             }
@@ -53,7 +53,7 @@ public final class ToolRegistry {
     public String prompts(java.util.Set<String> include, boolean planning) {
         StringBuilder text = new StringBuilder();
         for (Tool tool : tools.values()) {
-            if (planning && !tool.isAllowedInPlan()) continue;
+            if (planning ? !tool.isAllowedInPlan() : tool.isPlanOnly()) continue;
             if (include != null && (!include.contains(tool.name()) || !tool.isSubagentAllowed())) continue;
             String prompt = tool.prompt();
             if (!prompt.isBlank()) text.append("\n\n## 工具 ").append(tool.name()).append("\n").append(prompt);
@@ -86,6 +86,8 @@ public final class ToolRegistry {
         }
         if (ctx.workflow() != null && ctx.workflow().planning() && !tool.isAllowedInPlan())
             throw new ToolException("计划模式禁止工具: " + tool.name());
+        if (tool.isPlanOnly() && (ctx.workflow() == null || !ctx.workflow().planning()))
+            throw new ToolException("工具仅在计划模式可用: " + tool.name());
         JsonNode args;
         try {
             args = MAPPER.readTree(call.function().arguments());
