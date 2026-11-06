@@ -14,6 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class GitDiffTool implements Tool {
+    @Override public boolean isAllowedInPlan() { return true; }
+
     @Override public boolean requiresConfirmationChannel() { return false; }
     @Override public boolean isReadOnly() { return true; }
     @Override public boolean isSubagentAllowed() { return true; }

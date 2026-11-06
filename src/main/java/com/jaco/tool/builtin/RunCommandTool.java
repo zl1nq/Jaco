@@ -104,7 +104,15 @@ public final class RunCommandTool implements Tool {
         }
     }
 
-    record Result(String status, Integer exitCode, long durationMs, Options options, String warning, CommandOutput output) {
+    record Result(String status, Integer exitCode, long durationMs, Options options, String warning, CommandOutput output,
+                  List<ProcessHandle> remainingProcesses, List<Thread> cleanupThreads) {
+        Result(String status, Integer exitCode, long durationMs, Options options, String warning, CommandOutput output) {
+            this(status, exitCode, durationMs, options, warning, output, List.of(), List.of());
+        }
+        boolean resourcesAlive() {
+            return remainingProcesses.stream().anyMatch(ProcessHandle::isAlive)
+                    || cleanupThreads.stream().anyMatch(Thread::isAlive);
+        }
         ToolResult toToolResult() {
             return new ToolResult(status.equals("cancelled") ? com.jaco.tool.ToolExecution.Status.CANCELLED
                     : status.equals("exited") && Integer.valueOf(0).equals(exitCode)
@@ -130,6 +138,7 @@ public final class RunCommandTool implements Tool {
         String warning = "";
         Process process = null;
         Thread reader = null;
+        List<Thread> cleanupThreads = new ArrayList<>();
         boolean interrupted = false;
         Map<Long, ProcessHandle> descendants = new LinkedHashMap<>();
         try {
@@ -155,6 +164,7 @@ public final class RunCommandTool implements Tool {
                     process.getOutputStream().close();
                     Process running = process;
                     reader = new Thread(() -> drain(running, output, options.encoding()), "jaco-command-output-" + process.pid());
+                    cleanupThreads.add(reader);
                     reader.setDaemon(true);
                     reader.start();
                     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(options.timeout());
@@ -220,6 +230,7 @@ public final class RunCommandTool implements Tool {
                                 // 下面统一报告输出未正常结束。
                             }
                         }, "jaco-command-output-close-" + process.pid());
+                        cleanupThreads.add(closer);
                         closer.setDaemon(true);
                         closer.start();
                         interrupted |= joinReader(reader, 1000);
@@ -239,7 +250,9 @@ public final class RunCommandTool implements Tool {
                 Thread.currentThread().interrupt();
             }
         }
-        return new Result(status, exitCode, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start), options, warning, output);
+        if (process != null) descendants.put(process.pid(), process.toHandle());
+        return new Result(status, exitCode, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start), options, warning, output,
+                List.copyOf(descendants.values()), List.copyOf(cleanupThreads));
     }
 
     private boolean cancelled(ToolContext ctx) {

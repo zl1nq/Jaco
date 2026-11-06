@@ -14,6 +14,7 @@ import com.jaco.tool.ToolExecution;
  * 权限确认、审计日志、自动记忆等能力都应实现为 hook，而不是改 agent loop。</p>
  */
 public interface AgentHook {
+    default java.util.List<String> planningBlockers() { return java.util.List.of(); }
 
     /** 新会话创建成功或成功切换到其他会话后调用，用于清理会话级状态。 */
     default void onSessionChanged() {

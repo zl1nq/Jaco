@@ -23,6 +23,8 @@ import java.util.function.BooleanSupplier;
 
 /** 通过宿主事件提问；不读取 stdin、不把默认偏好当成权限授权。 */
 public final class AskUserQuestionTool implements Tool, AgentHook, AutoCloseable {
+    @Override public boolean isAllowedInPlan() { return true; }
+
     @Override public boolean requiresConfirmationChannel() { return false; }
 
     private static final ObjectMapper MAPPER = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);

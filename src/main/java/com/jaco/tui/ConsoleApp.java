@@ -57,6 +57,10 @@ public final class ConsoleApp {
     }
 
     private void registerCommands() {
+        commands.put("plan", new Command.Simple("plan", "进入或查看计划模式", args -> {
+            println(args.isBlank() ? agent.plan() : "用法：/plan");
+            return true;
+        }));
         commands.put("todos", new Command.Simple("todos", "查看当前会话任务清单", args -> {
             println(args.isBlank() ? agent.todos() : "用法：/todos");
             return true;
@@ -182,7 +186,7 @@ public final class ConsoleApp {
                 synchronized (noticeLock) { readingInput = true; }
                 try {
                     line = reader.readLine(ANSI_DIM + "│ " + ANSI_RESET
-                            + ANSI_GREEN + BOLD + "❯ " + ANSI_RESET, null, initial);
+                            + ANSI_GREEN + BOLD + (agent.planning() ? "[计划] ❯ " : "❯ ") + ANSI_RESET, null, initial);
                 } finally {
                     synchronized (noticeLock) { readingInput = false; }
                 }

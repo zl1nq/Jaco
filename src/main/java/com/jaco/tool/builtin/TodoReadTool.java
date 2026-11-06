@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.jaco.tool.*;
 
 public final class TodoReadTool implements Tool {
+    @Override public boolean isAllowedInPlan() { return true; }
+
     public String name() { return "todo_read"; }
     public String description() { return "读取当前主会话的任务清单与完成进度。"; }
     public String prompt() { return "用 todo_read 查看整体任务进度；清单随会话恢复，子任务通过报告让主任务更新。"; }

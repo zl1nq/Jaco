@@ -87,6 +87,7 @@ public final class Main {
         registry.register(new GitDiffTool());
         registry.register(new FindFilesTool());
         registry.register(new RecallTool());
+        registry.register(new com.jaco.tool.builtin.EnterPlanModeTool());
         registry.register(new com.jaco.tool.builtin.TodoReadTool());
         registry.register(new com.jaco.tool.builtin.TodoWriteTool());
         AskUserQuestionTool askUser = new AskUserQuestionTool();

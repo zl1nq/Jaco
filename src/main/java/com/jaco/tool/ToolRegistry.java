@@ -33,8 +33,12 @@ public final class ToolRegistry {
 
     /** 工具子集（子 agent 用）；include 为 null 时返回全部。 */
     public List<ToolDefinition> definitions(java.util.Set<String> include) {
+        return definitions(include, false);
+    }
+    public List<ToolDefinition> definitions(java.util.Set<String> include, boolean planning) {
         List<ToolDefinition> defs = new ArrayList<>();
         for (Tool tool : tools.values()) {
+            if (planning && !tool.isAllowedInPlan()) continue;
             if (include == null || (include.contains(tool.name()) && tool.isSubagentAllowed())) {
                 defs.add(ToolDefinition.of(tool.name(), tool.description(), tool.schema()));
             }
@@ -44,8 +48,12 @@ public final class ToolRegistry {
 
     /** 使用注册顺序装配，子任务范围与工具定义采用相同过滤规则。 */
     public String prompts(java.util.Set<String> include) {
+        return prompts(include, false);
+    }
+    public String prompts(java.util.Set<String> include, boolean planning) {
         StringBuilder text = new StringBuilder();
         for (Tool tool : tools.values()) {
+            if (planning && !tool.isAllowedInPlan()) continue;
             if (include != null && (!include.contains(tool.name()) || !tool.isSubagentAllowed())) continue;
             String prompt = tool.prompt();
             if (!prompt.isBlank()) text.append("\n\n## 工具 ").append(tool.name()).append("\n").append(prompt);
@@ -76,6 +84,8 @@ public final class ToolRegistry {
         if (tool == null) {
             throw new ToolException("未知工具: " + call.function().name());
         }
+        if (ctx.workflow() != null && ctx.workflow().planning() && !tool.isAllowedInPlan())
+            throw new ToolException("计划模式禁止工具: " + tool.name());
         JsonNode args;
         try {
             args = MAPPER.readTree(call.function().arguments());

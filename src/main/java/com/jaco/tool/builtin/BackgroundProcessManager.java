@@ -47,6 +47,10 @@ public final class BackgroundProcessManager implements AgentHook, AutoCloseable 
             output = new CommandOutput(owner, true);
         }
 
+        boolean busy() {
+            return result == null || (worker != null && worker.isAlive())
+                    || (process.get() != null && process.get().isAlive()) || result.resourcesAlive();
+        }
         String state() {
             return state(result);
         }
@@ -69,6 +73,10 @@ public final class BackgroundProcessManager implements AgentHook, AutoCloseable 
         }
     }
 
+    @Override public synchronized List<String> planningBlockers() {
+        return tasks.values().stream().filter(Task::busy)
+                .map(t -> t.id + "（执行或清理中）").toList();
+    }
     public PreparedToolCall prepareStart(JsonNode args, ToolContext ctx) {
         long expectedGeneration;
         synchronized (this) {
@@ -87,14 +95,15 @@ public final class BackgroundProcessManager implements AgentHook, AutoCloseable 
         if (generation != expectedGeneration) {
             throw new ToolException("会话已改变，后台任务未启动，请在当前会话重新调用");
         }
+        tasks.values().removeIf(task -> !task.owner.equals(owner) && !task.busy());
         if (tasks.values().stream().anyMatch(task -> !task.owner.equals(owner))) {
             throw new ToolException("后台任务属于其他会话，请先完成会话切换清理");
         }
-        if (tasks.values().stream().filter(task -> task.result == null).count() >= MAX_RUNNING) {
+        if (tasks.values().stream().filter(Task::busy).count() >= MAX_RUNNING) {
             throw new ToolException("最多同时运行 " + MAX_RUNNING + " 个后台任务，请先停止或等待已有任务");
         }
         if (tasks.size() >= MAX_RETAINED) {
-            String oldest = tasks.values().stream().filter(task -> task.result != null)
+            String oldest = tasks.values().stream().filter(task -> !task.busy())
                     .map(task -> task.id).findFirst().orElseThrow();
             tasks.remove(oldest);
         }
@@ -260,7 +269,7 @@ public final class BackgroundProcessManager implements AgentHook, AutoCloseable 
         }
         await(previous, 6000);
         synchronized (this) {
-            previous.forEach(task -> tasks.remove(task.id, task));
+            previous.stream().filter(task -> !task.busy()).forEach(task -> tasks.remove(task.id, task));
         }
     }
 

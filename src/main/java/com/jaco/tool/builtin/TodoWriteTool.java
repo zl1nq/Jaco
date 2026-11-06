@@ -9,6 +9,8 @@ import com.jaco.tool.*;
 import java.util.ArrayList;
 
 public final class TodoWriteTool implements Tool {
+    @Override public boolean isAllowedInPlan() { return true; }
+
     public String name() { return "todo_write"; }
     public String description() { return "整体更新主会话任务清单并保存进度。"; }
     public String prompt() { return "多步骤任务维护清单，保留既有项目的稳定 ID。只在工作实际完成时标记 completed。todos 整体替换清单，[] 清空；最多 50 项，每项内容最多 500 个字符。清单更新不授予文件或命令权限。"; }

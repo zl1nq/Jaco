@@ -97,6 +97,9 @@ public final class SubagentManager implements AutoCloseable {
         return handle;
     }
 
+    public synchronized List<String> planningBlockers() {
+        return active.keySet().stream().map(id -> "子任务 " + id + "（执行或清理中）").toList();
+    }
     public synchronized List<SubagentHandle.Snapshot> snapshots() {
         return handles.values().stream().map(SubagentHandle::snapshot).toList();
     }

@@ -16,6 +16,8 @@ public final class HookChain {
         this.hooks = List.copyOf(hooks);
     }
 
+    public List<String> planningBlockers() { return hooks.stream().flatMap(h -> h.planningBlockers().stream()).toList(); }
+
     public HookChain prepend(AgentHook hook) {
         var combined = new java.util.ArrayList<AgentHook>();
         combined.add(hook);

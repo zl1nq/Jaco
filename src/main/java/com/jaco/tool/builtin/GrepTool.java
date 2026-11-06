@@ -22,6 +22,8 @@ import java.util.regex.PatternSyntaxException;
 
 /** 流式搜索文本；结果上限按命中行计数，上下文不重复输出。 */
 public final class GrepTool implements Tool {
+    @Override public boolean isAllowedInPlan() { return true; }
+
     @Override public boolean requiresConfirmationChannel() { return false; }
     @Override public boolean isReadOnly() { return true; }
     @Override public boolean isSubagentAllowed() { return true; }
