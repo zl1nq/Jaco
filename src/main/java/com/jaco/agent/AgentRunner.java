@@ -394,6 +394,18 @@ public final class AgentRunner implements AutoCloseable {
         return handle;
     }
 
+    /** 已切换出去的轮次不能用旧快照覆盖重新载入的工作流状态。 */
+    private void saveOwnedSession(Session owner) {
+        if (session.workflow() == owner.workflow()) {
+            sessions.save(owner);
+        } else if (!session.id().equals(owner.id())) {
+            // 取消结果仍归原会话；原会话已被更新时不再覆盖它。
+            var saved = sessions.load(owner.id());
+            if (saved.isPresent() && saved.get().workflow().state().equals(owner.workflow().state()))
+                sessions.save(owner);
+        }
+    }
+
     private void completeTurn(TurnHandle handle, TurnEvent.Done done) {
         activeTurn.compareAndSet(handle, null);
         handle.emit(done);
@@ -404,7 +416,7 @@ public final class AgentRunner implements AutoCloseable {
             if (handle.isCancelled()) return;
             String effective = hooks.onUserPromptSubmit(prompt);
             if (effective == null) {
-                sessions.save(owner);
+                saveOwnedSession(owner);
                 completeTurn(handle, new TurnEvent.Done(null, null, false, true, null, 0));
                 return;
             }
@@ -444,7 +456,7 @@ public final class AgentRunner implements AutoCloseable {
                     var outcome = support.compactContext(compactor, owner.messages(), lastPromptTokens, false,
                             notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
                     if (outcome.compacted()) {
-                        sessions.save(owner);
+                        saveOwnedSession(owner);
                         lastPromptTokens = outcome.tokensAfter();
                     }
                     if (handle.isCancelled()) { interrupted = true; break; }
@@ -475,7 +487,7 @@ public final class AgentRunner implements AutoCloseable {
                                 break;
                             }
                             lastPromptTokens = forced.tokensAfter();
-                            sessions.save(owner);
+                            saveOwnedSession(owner);
                             continue;
                         }
                         error = result.error();
@@ -519,7 +531,7 @@ public final class AgentRunner implements AutoCloseable {
                                 notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
                         if (forced.compacted()) {
                             lastPromptTokens = forced.tokensAfter();
-                            sessions.save(owner);
+                            saveOwnedSession(owner);
                             continue;
                         }
                     }
@@ -538,7 +550,7 @@ public final class AgentRunner implements AutoCloseable {
             if (handle.isCancelled()) {
                 interrupted = true;
             }
-            sessions.save(owner);
+            saveOwnedSession(owner);
             if (userProfile != null && userProfile.enabled() && !interrupted && error == null
                     && "stop".equals(finishReason)) {
                 try {
@@ -561,7 +573,8 @@ public final class AgentRunner implements AutoCloseable {
             }
             completeTurn(handle, new TurnEvent.Done(totalUsage, finishReason, interrupted, false, error, iterations));
         } catch (Exception fatal) {
-            sessions.save(owner);
+            try { saveOwnedSession(owner); }
+            catch (RuntimeException saveFailure) { fatal.addSuppressed(saveFailure); }
             completeTurn(handle, new TurnEvent.Done(null, null, false, false, fatal, 0));
         }
     }

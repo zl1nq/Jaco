@@ -62,4 +62,105 @@ class AgentRunnerPlanTest {
             assertEquals(2, agent.session().messages().stream().filter(m -> m.role() == Role.TOOL).count());
         }
     }
+    @Test void existingSessionAuthorizationCannotBypassPlanGate() throws Exception {
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request) {
+                int i = calls.getAndIncrement();
+                return i % 2 == 0 ? TestStreams.of(new StreamChunk.ToolCallDelta(0, "w" + i, "write_file",
+                        "{\"path\":\"" + (i == 0 ? "granted.txt" : "blocked.txt") + "\",\"content\":\"hello\"}"),
+                        new StreamChunk.Done("tool_calls", null))
+                        : TestStreams.of(new StreamChunk.Delta("完成"), new StreamChunk.Done("stop", null));
+            }
+        };
+        var registry = new ToolRegistry(new WriteFileTool());
+        try (var agent = new AgentRunner(client, new ProviderConfig("http://localhost", "k", "m", null), null,
+                new SessionStore(dir.resolve("s")), new HookChain(List.of(new PermissionHook(registry))), registry,
+                new ToolSandbox(dir, List.of()), dir, "auto", 10, 100000, 8000)) {
+            agent.start();
+            for (int round = 0; round < 2; round++) {
+                final boolean planning = round == 1;
+                if (planning) agent.plan();
+                assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+                    try (var handle = agent.runTurn("创建文件")) {
+                        while (true) {
+                            var event = handle.poll(100);
+                            if (event instanceof TurnEvent.ToolPreview) assertFalse(planning);
+                            if (event instanceof TurnEvent.ApprovalRequest a) { assertFalse(planning); a.resolver().accept("a"); }
+                            if (event instanceof TurnEvent.Done done) { assertNull(done.error()); break; }
+                        }
+                    }
+                });
+            }
+            assertTrue(Files.exists(dir.resolve("granted.txt")));
+            assertFalse(Files.exists(dir.resolve("blocked.txt")));
+            assertTrue(agent.session().messages().stream().anyMatch(m -> m.role() == Role.TOOL && m.content().contains("计划模式禁止")));
+        }
+    }
+
+    @Test void persistenceFailureStillFinishesTurnAndDoesNotApprove() throws Exception {
+        var client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request) {
+                return TestStreams.of(new StreamChunk.ToolCallDelta(0, "plan", "submit_plan", "{\"plan\":\"完整方案\"}"),
+                        new StreamChunk.Done("tool_calls", null));
+            }
+        };
+        var store = new SessionStore(dir.resolve("failure-sessions"));
+        try (var agent = new AgentRunner(client, new ProviderConfig("http://localhost", "k", "m", null), null,
+                store, new HookChain(List.of()), new ToolRegistry(new SubmitPlanTool()),
+                new ToolSandbox(dir, List.of()), dir, "auto", 3, 100000, 8000)) {
+            agent.start(); agent.plan();
+            assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+                try (var handle = agent.runTurn("计划")) {
+                    while (true) {
+                        var event = handle.poll(100);
+                        if (event instanceof TurnEvent.PlanApprovalRequest p) {
+                            Files.createDirectory(dir.resolve("failure-sessions").resolve(agent.session().id() + ".json.tmp"));
+                            p.resolver().accept(true);
+                        }
+                        if (event instanceof TurnEvent.Done done) { assertNotNull(done.error()); break; }
+                    }
+                }
+            });
+            assertTrue(agent.planning());
+            assertEquals("draft", agent.session().workflow().state().decision());
+            assertTrue(store.load(agent.session().id()).orElseThrow().workflow().planning());
+        }
+    }
+    @Test void staleTurnCannotOverwriteReloadedWorkflowAfterSwitchingBack() throws Exception {
+        var client = new OpenAiCompatClient("http://localhost", "k") {
+            @Override public ChatStream chatStream(ChatRequest request) {
+                return TestStreams.of(new StreamChunk.ToolCallDelta(0, "p", "submit_plan", "{\"plan\":\"旧方案\"}"),
+                        new StreamChunk.Done("tool_calls", null));
+            }
+        };
+        var store = new SessionStore(dir.resolve("stale"));
+        try (var agent = new AgentRunner(client, new ProviderConfig("http://localhost", "k", "m", null), null,
+                store, new HookChain(List.of()), new ToolRegistry(new SubmitPlanTool()),
+                new ToolSandbox(dir, List.of()), dir, "auto", 3, 100000, 8000)) {
+            agent.start(); agent.plan();
+            String original = agent.session().id();
+            assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+                try (var handle = agent.runTurn("计划")) {
+                    while (true) {
+                        var event = handle.poll(100);
+                        if (event instanceof TurnEvent.PlanApprovalRequest p) {
+                            agent.newSession();
+                            assertNull(agent.switchSession(original));
+                            var service = new com.jaco.session.WorkflowService(agent.session(), store, () -> true);
+                            service.saveDraft("新方案");
+                            service.cancelPlan();
+                            p.resolver().accept(true);
+                            assertFalse(p.active().getAsBoolean());
+                        }
+                        if (event instanceof TurnEvent.Done done) { assertNull(done.error()); break; }
+                    }
+                }
+            });
+            var state = store.load(original).orElseThrow().workflow().state();
+            assertEquals("新方案", state.draft());
+            assertEquals("cancelled", state.decision());
+            assertEquals(com.jaco.session.SessionWorkflow.Mode.NORMAL, state.mode());
+        }
+    }
 }

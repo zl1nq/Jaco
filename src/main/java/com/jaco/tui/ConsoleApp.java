@@ -295,7 +295,7 @@ public final class ConsoleApp {
         }
         println(ANSI_DIM + "  Ctrl+C  中断本轮（取消流/杀命令/拒绝确认，已生成部分保留）" + ANSI_RESET);
         println(ANSI_DIM + "  Enter 发送 · Shift+Enter 换行（兼容 Alt+Enter）· 支持整段粘贴；不支持的终端可先输入 /paste" + ANSI_RESET);
-        println(ANSI_DIM + "  运行期间可输入 /subagents [任务ID]、/help、/cancel，回车执行；Ctrl+U 清空输入" + ANSI_RESET);
+        println(ANSI_DIM + "  运行期间可输入 /subagents [任务ID]、/todos、/help、/cancel，回车执行；Ctrl+U 清空输入" + ANSI_RESET);
     }
 
     // ---- 一轮对话：消费 agent loop 的事件流 ----
@@ -631,7 +631,7 @@ public final class ConsoleApp {
         } else if (line.equals("/cancel")) {
             handle.cancel();
         } else {
-            println(ANSI_YELLOW + "运行期间支持 /subagents [任务ID]、/help、/cancel；其他命令请在本轮结束后执行。" + ANSI_RESET);
+            println(ANSI_YELLOW + "运行期间支持 /subagents [任务ID]、/todos、/help、/cancel；其他命令请在本轮结束后执行。" + ANSI_RESET);
         }
     }
 

@@ -38,6 +38,7 @@ class AgentRunnerContextTest {
         };
         ToolRegistry registry = new ToolRegistry();
         registry.register(new Tool() {
+            public boolean isAllowedInPlan() { return true; }
             public boolean isSubagentAllowed() { return true; }
             public boolean requiresConfirmationChannel() { return false; }
             public OutputPolicy outputPolicy() { return policy; }
@@ -290,4 +291,35 @@ class AgentRunnerContextTest {
             }
         }
     }
+    @Test void workflowSurvivesCompactionTitleUpdateAndSessionSwitch() throws Exception {
+        var calls = new AtomicInteger();
+        var compacted = new AtomicBoolean();
+        try (var agent = runner(request -> {
+            if (request.tools() == null) return TestStreams.of(new StreamChunk.Delta("调查进展"), new StreamChunk.Done("stop", null));
+            String system = request.messages().getFirst().content();
+            assertTrue(system.contains("当前模式：计划"));
+            assertTrue(system.contains("stable-id — 保留最新进度"));
+            if (request.messages().stream().anyMatch(m -> m.content() != null && m.content().startsWith("[迭代摘要"))) compacted.set(true);
+            int i = calls.getAndIncrement();
+            return i < 5 ? call("wf" + i, "read_file", "{}") : answer();
+        }, ctx -> "x".repeat(2000), 1600, 2500)) {
+            String original = agent.session().id();
+            var service = new com.jaco.session.WorkflowService(agent.session(), store, () -> true);
+            service.writeTodos(List.of(new com.jaco.session.TodoItem("stable-id", "保留最新进度", com.jaco.session.TodoItem.Status.in_progress)));
+            agent.plan();
+            service.saveDraft("压缩后仍须保留的方案");
+            assertNull(finish(agent).error());
+            assertTrue(compacted.get());
+            assertEquals("原始任务及约束", agent.session().title());
+            agent.newSession();
+            assertFalse(agent.planning());
+            assertFalse(agent.todos().contains("stable-id"));
+            agent.switchSession(original);
+            assertTrue(agent.planning());
+            assertTrue(agent.todos().contains("stable-id"));
+            assertEquals("压缩后仍须保留的方案", agent.session().workflow().state().draft());
+            assertTrue(store.load(original).orElseThrow().workflow().planning());
+        }
+    }
+
 }

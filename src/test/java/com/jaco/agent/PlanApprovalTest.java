@@ -91,4 +91,17 @@ class PlanApprovalTest {
         assertEquals("方案", saved.draft());
         assertEquals("cancelled", saved.decision());
     }
+    @Test void failedApprovalSaveLeavesMemoryAndDiskInPlanMode() throws Exception {
+        try (Pending p = new Pending()) {
+            var request = p.request();
+            java.nio.file.Files.createDirectory(dir.resolve(p.owner.id() + ".json.tmp"));
+            request.resolver().accept(true);
+            assertThrows(ExecutionException.class, () -> p.result.get(2, TimeUnit.SECONDS));
+            assertTrue(p.service.planning());
+            assertEquals("draft", p.owner.workflow().state().decision());
+            assertTrue(p.store.load(p.owner.id()).orElseThrow().workflow().planning());
+            assertTrue(p.service.shouldStopTurn());
+        }
+    }
+
 }

@@ -114,6 +114,7 @@ class SubagentManagerTest {
             reached(ready);
             handle.cancel();
             assertEquals(ExitReason.CANCELLED, handle.await(Duration.ofSeconds(3)).exitReason());
+            assertTrue(manager.planningBlockers().isEmpty());
             assertTrue(closed.get());
         }
     }
@@ -155,12 +156,14 @@ class SubagentManagerTest {
             assertThrows(TimeoutException.class, () -> handle.await(Duration.ofMillis(100)));
             assertEquals(SubagentState.CANCELLING, handle.snapshot().state());
             assertTrue(handle.snapshot().cleanupOverdue());
+            assertTrue(manager.planningBlockers().stream().anyMatch(s -> s.contains(handle.id())));
             assertThrows(IllegalStateException.class, () -> manager.start(spec(), () -> false,
                     c -> SubagentManager.Completion.succeeded("不能占用第二个槽位")));
             assertTimeoutPreemptively(Duration.ofSeconds(1), manager::close);
             assertNull(handle.result());
             release.countDown();
             assertEquals(ExitReason.CANCELLED, handle.await(Duration.ofSeconds(3)).exitReason());
+            assertTrue(manager.planningBlockers().isEmpty());
             assertThrows(IllegalStateException.class, () -> manager.start(spec(), () -> false,
                     c -> SubagentManager.Completion.succeeded("关闭后拒绝接收")));
             manager.close();
@@ -218,6 +221,7 @@ class SubagentManagerTest {
             assertEquals(SubagentState.CANCELLING, handle.snapshot().state());
             release.countDown();
             assertEquals(ExitReason.CANCELLED, handle.await(Duration.ofSeconds(3)).exitReason());
+            assertTrue(manager.planningBlockers().isEmpty());
         } finally { release.countDown(); manager.close(); }
     }
 
@@ -250,6 +254,7 @@ class SubagentManagerTest {
             assertEquals(SubagentState.RUNNING, handle.snapshot().state());
             manager.cancelSession("session");
             assertEquals(ExitReason.CANCELLED, handle.await(Duration.ofSeconds(3)).exitReason());
+            assertTrue(manager.planningBlockers().isEmpty());
             assertEquals(StopReason.SESSION_CHANGED, handle.snapshot().stopReason());
         }
     }

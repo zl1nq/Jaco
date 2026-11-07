@@ -12,3 +12,4 @@
 | [上下文管理](context-management.md) | 工具输出归档、对话压缩与 recall 检索 |
 | [架构、扩展与开发](development.md) | 模块职责、工具和钩子扩展、渲染能力与测试方式 |
 | [子任务生命周期设计](subagent-lifecycle.md) | 子任务内部状态、资源清理、父作用域、结果保留与验证边界 |
+| [任务清单与计划模式人工验收](workflow-acceptance.md) | 清单恢复、计划批准与拒绝、权限隔离和后台任务限制 |

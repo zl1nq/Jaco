@@ -673,4 +673,20 @@ class ConsoleAppRunningCommandTest {
             assertTrue(console.text().contains("请输入 y 或 n"));
         }
     }
+    @Test void todoAndPlanCommandsDoNotStartModelAndShowMode() throws Exception {
+        try (var agent = agent(null, new ToolRegistry())) {
+            Console console = new Console();
+            var commands = new ArrayDeque<>(List.of("/plan", "/todos", "/plan cancel", "/exit"));
+            console.readLine = args -> {
+                if (commands.size() == 2 || commands.size() == 3) assertTrue(args[0].toString().contains("[计划]"));
+                return commands.remove();
+            };
+            console.app(agent).run();
+            assertTrue(agent.session().messages().isEmpty());
+            assertTrue(console.text().contains("任务清单（已完成 0/0）"));
+            assertFalse(agent.planning());
+            assertEquals("cancelled", agent.session().workflow().state().decision());
+        }
+    }
+
 }

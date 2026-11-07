@@ -304,4 +304,18 @@ class BackgroundProcessManagerTest {
         assertTrue(Files.exists(file), "子进程未启动");
         assertTrue(Files.size(file) > 0);
     }
+    @Test void activeBackgroundProcessPreventsPlanEntryUntilCleanup() throws Exception {
+        var store = new SessionStore(tmp.resolve("workflow-sessions"));
+        var owner = store.createNew();
+        var workflow = new com.jaco.session.WorkflowService(owner, store, () -> true, manager::planningBlockers);
+        var context = ctx();
+        String id = start(command("wait"), context);
+        assertTrue(manager.planningBlockers().stream().anyMatch(s -> s.contains(id)));
+        assertThrows(IllegalStateException.class, workflow::enterPlan);
+        stop(id, context);
+        assertTrue(manager.planningBlockers().isEmpty());
+        workflow.enterPlan();
+        assertTrue(workflow.planning());
+    }
+
 }
