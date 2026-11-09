@@ -216,7 +216,7 @@ public final class ConsoleApp {
             }
             runTurn(line);
         }
-        flushProfile();
+        // 画像消息入队时已持久化；退出不补处理，避免额外模型请求。
         println(ANSI_DIM + "再见。" + ANSI_RESET);
     }
 
