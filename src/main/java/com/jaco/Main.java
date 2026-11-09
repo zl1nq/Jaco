@@ -91,6 +91,7 @@ public final class Main {
         registry.register(new com.jaco.tool.builtin.EnterPlanModeTool());
         registry.register(new com.jaco.tool.builtin.SkillListTool());
         registry.register(new com.jaco.tool.builtin.SkillLoadTool());
+        registry.register(new com.jaco.tool.builtin.SkillReadTool());
         registry.register(new com.jaco.tool.builtin.TodoReadTool());
         registry.register(new com.jaco.tool.builtin.TodoWriteTool());
         AskUserQuestionTool askUser = new AskUserQuestionTool();

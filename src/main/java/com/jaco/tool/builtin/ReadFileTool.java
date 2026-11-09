@@ -77,10 +77,12 @@ public final class ReadFileTool implements Tool {
 
     @Override
     public ToolResult execute(JsonNode args, ToolContext ctx) throws IOException {
-        return ToolResult.success(executeText(args, ctx));
+        return ToolResult.success(readPage(args, ctx).text());
     }
 
-    private String executeText(JsonNode args, ToolContext ctx) throws IOException {
+    /** 结构化版本供技能资源连续读取复用，避免从展示文案解析状态。 */
+    public record PageResult(String text, String version) {}
+    public PageResult readPage(JsonNode args, ToolContext ctx) throws IOException {
         if (args == null || !args.isObject()) throw new ToolException("参数必须是对象");
         var fields = args.fieldNames();
         while (fields.hasNext()) {
@@ -168,11 +170,11 @@ public final class ReadFileTool implements Tool {
             if (offset > Math.max(1, totalLines))
                 throw new ToolException("offset " + offset + " 超出文件行数 " + totalLines);
             if (totalLines == 0 && column != 0) throw new ToolException("空文件的 column_offset 必须为 0");
-            return "文件版本: " + version + "\n文件共 " + totalLines + " 行\n"
+            return new PageResult("文件版本: " + version + "\n文件共 " + totalLines + " 行\n"
                     + "has_more=" + page.stopped + "\n"
                     + (page.stopped ? "next_line=" + page.nextLine + ", next_column_offset=" + page.nextColumn
                     + "（分别作为 offset、column_offset，携带 expected_version 继续读取）\n" : "")
-                    + (totalLines == 0 ? "(文件为空)" : page.content);
+                    + (totalLines == 0 ? "(文件为空)" : page.content), version);
         } catch (CharacterCodingException e) {
             throw new ToolException("文件不是有效的 UTF-8 文本，请转换编码后读取");
         } catch (AccessDeniedException e) {

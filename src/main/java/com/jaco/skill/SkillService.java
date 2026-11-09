@@ -21,6 +21,8 @@ public final class SkillService {
     private final long contextLimit;
     private final Map<String, SkillInvocation> loaded = new LinkedHashMap<>();
     private final String catalog;
+    private record ResourceVersion(java.nio.file.Path realPath, String version) {}
+    private final Map<String, ResourceVersion> resources = new HashMap<>();
 
     public SkillService(SkillRegistry registry, Session owner, SessionStore store, String turnId,
                         BooleanSupplier active, long contextLimit) {
@@ -60,6 +62,42 @@ public final class SkillService {
     public synchronized String context() {
         check();
         return catalog + renderBodies(loaded.values().stream().map(SkillInvocation::definition).toList());
+    }
+    public synchronized com.jaco.tool.ToolResult read(String name, com.fasterxml.jackson.databind.node.ObjectNode args,
+                                                      com.jaco.tool.ToolContext caller) throws IOException {
+        check();
+        SkillDefinition definition = registry.resolve(name);
+        if (!loaded.containsKey(definition.id())) throw new ToolException("请先在本轮加载技能: " + definition.id());
+        registry.fresh(definition);
+        String path = args.path("path").asText();
+        if (path.isBlank()) throw new ToolException("资源路径不能为空");
+        java.nio.file.Path relative = java.nio.file.Path.of(path);
+        if (relative.isAbsolute() || relative.getRoot() != null || path.contains(":"))
+            throw new ToolException("技能资源必须使用包内相对路径");
+        java.nio.file.Path logical = definition.root().resolve(relative).normalize();
+        if (!logical.startsWith(definition.root())) throw new ToolException("技能资源路径越界");
+        java.nio.file.Path real = logical.toRealPath();
+        if (!real.startsWith(definition.root())) throw new ToolException("技能资源符号链接越界");
+        String key = definition.id() + ":" + logical;
+        ResourceVersion previous = resources.get(key);
+        if (previous != null && !previous.realPath().equals(real)) throw new ToolException("技能资源指向已变化，请在后续轮次重新加载");
+        var readArgs = args.deepCopy();
+        readArgs.remove("name");
+        readArgs.put("path", real.toString());
+        if (previous != null) {
+            if (readArgs.has("expected_version") && !previous.version().equals(readArgs.path("expected_version").asText()))
+                throw new ToolException("不能覆盖本轮已固定的资源版本");
+            readArgs.put("expected_version", previous.version());
+        }
+        var context = new com.jaco.tool.ToolContext(definition.root(), new com.jaco.tool.ToolSandbox(definition.root(), List.of()),
+                caller.shellChoice(), caller.currentProcess(), () -> !active.getAsBoolean() || caller.cancelled().getAsBoolean(),
+                caller.archiveFile(), caller.maxToolResultChars());
+        var page = new com.jaco.tool.builtin.ReadFileTool().readPage(readArgs, context);
+        check();
+        registry.fresh(definition);
+        if (!logical.toRealPath().equals(real)) throw new ToolException("技能资源读取期间指向发生变化");
+        resources.put(key, new ResourceVersion(real, page.version()));
+        return com.jaco.tool.ToolResult.success(page.text());
     }
     public synchronized boolean hasLoaded() { return !loaded.isEmpty(); }
     public boolean hasCatalog() { return !catalog.isEmpty(); }
