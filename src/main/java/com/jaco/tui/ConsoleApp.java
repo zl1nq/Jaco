@@ -57,6 +57,10 @@ public final class ConsoleApp {
     }
 
     private void registerCommands() {
+        commands.put("skills", new Command.Simple("skills", "技能目录：/skills [show <名称> | reload]", args -> {
+            println(agent.skillsCommand(args));
+            return true;
+        }));
         commands.put("plan", new Command.Simple("plan", "进入或查看计划模式", args -> {
             println(args.isBlank() ? agent.plan() : args.strip().equals("cancel") ? agent.cancelPlan() : "用法：/plan [cancel]");
             return true;

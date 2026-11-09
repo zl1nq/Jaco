@@ -122,6 +122,7 @@ public final class Main {
         } catch (IOException | IllegalArgumentException e) {
             System.err.println("用户画像加载失败，本次不启用自动记忆；请检查 user-profile.json，原文件保留。");
         }
+        agent.bindSkills(new com.jaco.skill.SkillRegistry(home.resolve("skills"), workspaceRoot.resolve(".jaco/skills")));
         agent.start();
         agent.configureSubagentLimits(java.time.Duration.ofSeconds(config.effectiveSubagentTimeoutSeconds()),
                 config.effectiveSubagentMaxIterations());

@@ -689,4 +689,15 @@ class ConsoleAppRunningCommandTest {
         }
     }
 
+    @Test void skillDirectoryCommandsDoNotCallModel() throws Exception {
+        try (var agent = agent(null, new ToolRegistry())) {
+            Console console = new Console();
+            var commands = new ArrayDeque<>(List.of("/skills", "/skills show absent", "/skills reload", "/exit"));
+            console.readLine = args -> commands.remove();
+            console.app(agent).run();
+            assertTrue(agent.session().messages().isEmpty());
+            assertTrue(console.text().contains("暂无技能"));
+            assertTrue(console.text().contains("没有找到技能"));
+        }
+    }
 }

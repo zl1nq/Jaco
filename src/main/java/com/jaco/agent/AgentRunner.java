@@ -169,6 +169,19 @@ public final class AgentRunner implements AutoCloseable {
                 workspaceRoot, shellChoice, contextLimit, maxToolResultChars);
     }
 
+    private com.jaco.skill.SkillRegistry skills = com.jaco.skill.SkillRegistry.empty();
+    public void bindSkills(com.jaco.skill.SkillRegistry skills) { this.skills = java.util.Objects.requireNonNull(skills); }
+    public String skillsCommand(String args) {
+        if (activeTurn.get() != null) return "技能命令仅在空闲时可用";
+        try {
+            String command = args.strip();
+            if (command.isEmpty()) return skills.describe();
+            if (command.equals("reload")) { skills.reload(); return skills.describe(); }
+            if (command.startsWith("show ")) return skills.show(command.substring(5).strip());
+            return "用法：/skills [show <名称> | reload]";
+        } catch (IOException | IllegalArgumentException e) { return "技能操作失败: " + e.getMessage(); }
+    }
+
     public void start() {
         session = sessions.loadLatestOrNew();
         restoreProfileTopics();
