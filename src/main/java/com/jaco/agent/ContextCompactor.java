@@ -39,6 +39,9 @@ public final class ContextCompactor {
     private final SessionStore sessions;
     private final com.jaco.session.Session session;
     private final long contextLimit;
+    private long reservedTokens;
+    public void reserveTokens(long tokens) { reservedTokens = Math.max(0, tokens); }
+    private long historyLimit() { return Math.max(1, contextLimit - reservedTokens); }
 
     public ContextCompactor(SessionStore sessions, com.jaco.session.Session session, long contextLimit) {
         this.sessions = sessions;
@@ -55,9 +58,9 @@ public final class ContextCompactor {
 
     public Outcome compactIfNeeded(List<Message> messages, long lastPromptTokens,
                                    Consumer<String> notices, Summarizer summarizer) {
-        long before = Math.max(estimateTokens(messages), lastPromptTokens);
-        long trigger = (long) (contextLimit * TRIGGER_RATIO);
-        long target = (long) (contextLimit * TARGET_RATIO);
+        long before = Math.max(estimateTokens(messages), Math.max(0, lastPromptTokens - reservedTokens));
+        long trigger = (long) (historyLimit() * TRIGGER_RATIO);
+        long target = (long) (historyLimit() * TARGET_RATIO);
         if (before <= trigger) {
             return new Outcome(false, before, before);
         }
@@ -74,7 +77,7 @@ public final class ContextCompactor {
     public Outcome forceCompact(List<Message> messages, Consumer<String> notices, Summarizer summarizer) {
         long before = estimateTokens(messages);
         notices.accept("⟲ 上下文超限，正在强制压缩…");
-        long after = compact(messages, (long) (contextLimit * TARGET_RATIO), summarizer, true);
+        long after = compact(messages, (long) (historyLimit() * TARGET_RATIO), summarizer, true);
         log.info("强制压缩: {} -> {} tokens (limit={})", before, after, contextLimit);
         notices.accept(after < before ? "⟲ 已强制压缩: " + before + " → " + after + " tokens"
                 : "⟲ 强制压缩未能缩小请求，保留现有进展");

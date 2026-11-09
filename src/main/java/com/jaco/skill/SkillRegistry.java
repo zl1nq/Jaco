@@ -17,6 +17,12 @@ public final class SkillRegistry {
         this.projectRoot = projectRoot;
         reload();
     }
+    private SkillRegistry(SkillRegistry original) {
+        this.userRoot = original.userRoot;
+        this.projectRoot = original.projectRoot;
+        this.entries = original.entries;
+    }
+    public SkillRegistry snapshot() { return new SkillRegistry(this); }
     public static SkillRegistry empty() { return new SkillRegistry(null, null); }
     public synchronized void reload() {
         List<Entry> next = new ArrayList<>();

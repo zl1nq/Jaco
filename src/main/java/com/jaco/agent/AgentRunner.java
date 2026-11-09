@@ -383,17 +383,33 @@ public final class AgentRunner implements AutoCloseable {
     }
 
     /** 启动一轮：loop 在后台线程运行，返回的事件句柄由调用方消费。 */
+    public TurnHandle runSkillTurn(String name, String task) throws IOException {
+        if (activeTurn.get() != null) throw new IllegalStateException("技能命令仅在空闲时可用");
+        return startTurn("/skill " + name + (task.isBlank() ? "" : " " + task), name);
+    }
     public TurnHandle runTurn(String prompt) {
+        try { return startTurn(prompt, null); }
+        catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+    }
+    private TurnHandle startTurn(String prompt, String explicitSkill) throws IOException {
         TurnHandle handle = new TurnHandle();
         activeTurn.set(handle);
         handle.onCancel(() -> subagents.cancelTurn(handle.id(), StopReason.PARENT_CANCELLED));
         Session owner = session;
+        var skillService = new com.jaco.skill.SkillService(skills, owner, sessions, handle.id(),
+                () -> session.workflow() == owner.workflow() && activeTurn.get() == handle && !handle.isCancelled(), contextLimit);
+        try {
+            if (explicitSkill != null) handle.emit(new TurnEvent.Notice(skillService.load(explicitSkill, true)));
+        } catch (IOException | RuntimeException e) {
+            activeTurn.compareAndSet(handle, null);
+            throw e;
+        }
         Thread thread = new Thread(() -> {
             TurnEventSink.install(handle);
             currentTurn.set(handle);
             currentSessionId.set(owner.id());
             try {
-                loop(prompt, handle, owner);
+                loop(prompt, handle, owner, skillService);
             } finally {
                 subagents.cancelTurn(handle.id(), StopReason.SCOPE_CLOSED);
                 currentTurn.remove();
@@ -424,7 +440,7 @@ public final class AgentRunner implements AutoCloseable {
         handle.emit(done);
     }
 
-    private void loop(String prompt, TurnHandle handle, Session owner) {
+    private void loop(String prompt, TurnHandle handle, Session owner, com.jaco.skill.SkillService skillService) {
         try {
             if (handle.isCancelled()) return;
             String effective = hooks.onUserPromptSubmit(prompt);
@@ -466,6 +482,9 @@ public final class AgentRunner implements AutoCloseable {
                 }
                 ChatStream stream = null;
                 try {
+                    String skillContext = skillService.context();
+                    long pinned = com.jaco.skill.SkillService.tokens(skillContext);
+                    compactor.reserveTokens(pinned);
                     var outcome = support.compactContext(compactor, owner.messages(), lastPromptTokens, false,
                             notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
                     if (outcome.compacted()) {
@@ -473,9 +492,17 @@ public final class AgentRunner implements AutoCloseable {
                         lastPromptTokens = outcome.tokensAfter();
                     }
                     if (handle.isCancelled()) { interrupted = true; break; }
+                    var messages = buildMessages(owner, skillContext);
+                    if ((skillService.hasLoaded() || skillService.hasCatalog()) && ContextCompactor.estimateTokens(messages) > contextLimit) {
+                        support.compactContext(compactor, owner.messages(), 0, true,
+                                notice -> handle.emit(new TurnEvent.Notice(notice)), handle::isCancelled);
+                        messages = buildMessages(owner, skillContext);
+                        if (ContextCompactor.estimateTokens(messages) > contextLimit)
+                            throw new IOException("上下文不足，无法保留完整技能说明及当前任务；请缩小任务或使用更大的上下文配置");
+                    }
                     ChatRequest request = new ChatRequest(
                             provider.model(),
-                            buildMessages(owner),
+                            messages,
                             provider.temperature(),
                             true,
                             new ChatRequest.StreamOptions(true),
@@ -528,7 +555,7 @@ public final class AgentRunner implements AutoCloseable {
                             Role.ASSISTANT,
                             result.content().isEmpty() ? null : result.content(),
                             calls, null, null));
-                    boolean waitingForPlan = executeTools(calls, handle, owner);
+                    boolean waitingForPlan = executeTools(calls, handle, owner, skillService);
                     if (waitingForPlan && !handle.isCancelled()) {
                         finishReason = "plan_waiting";
                         break;
@@ -752,11 +779,11 @@ public final class AgentRunner implements AutoCloseable {
     @Override public void close() { subagents.close(); }
 
     /** 串行执行工具；每个 tool_call 都必须产生 tool result（协议要求成对）。 */
-    private boolean executeTools(List<ToolCall> calls, TurnHandle handle, Session owner) {
+    private boolean executeTools(List<ToolCall> calls, TurnHandle handle, Session owner, com.jaco.skill.SkillService skillService) {
         ToolContext ctx = new ToolContext(workspaceRoot, sandbox, shellChoice,
                 handle.processRef(), handle::isCancelled, sessions.archivePath(owner), maxToolResultChars,
                 new com.jaco.session.WorkflowService(owner, sessions,
-                        () -> session.workflow() == owner.workflow() && activeTurn.get() == handle && !handle.isCancelled(), this::planningBlockers));
+                        () -> session.workflow() == owner.workflow() && activeTurn.get() == handle && !handle.isCancelled(), this::planningBlockers), skillService);
         var executor = new ToolCallExecutor(registry, hooks);
         for (ToolCall call : calls) {
             var execution = ctx.workflow().shouldStopTurn()
@@ -774,9 +801,9 @@ public final class AgentRunner implements AutoCloseable {
         return AgentLoopSupport.clipMiddle(text, budget);
     }
 
-    private List<Message> buildMessages(Session owner) {
+    private List<Message> buildMessages(Session owner, String skillContext) {
         List<Message> messages = new ArrayList<>();
-        messages.add(Message.system(buildSystemPrompt(owner) + "\n" + owner.workflow().renderPlan() + "\n\n当前主会话进度：\n" + owner.workflow().renderTodos()));
+        messages.add(Message.system(buildSystemPrompt(owner) + "\n" + owner.workflow().renderPlan() + "\n\n当前主会话进度：\n" + owner.workflow().renderTodos() + skillContext));
         messages.addAll(owner.messages());
         return messages;
     }

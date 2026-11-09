@@ -57,6 +57,13 @@ public final class ConsoleApp {
     }
 
     private void registerCommands() {
+        commands.put("skill", new Command.Simple("skill", "执行技能：/skill <名称> [任务说明]", args -> {
+            String[] parts = args.strip().split("\\s+", 2);
+            if (parts[0].isEmpty()) { println("用法：/skill <名称> [任务说明]"); return true; }
+            try { consumeTurn(agent.runSkillTurn(parts[0], parts.length > 1 ? parts[1] : "")); }
+            catch (java.io.IOException | RuntimeException e) { println("技能加载失败: " + e.getMessage()); }
+            return true;
+        }));
         commands.put("skills", new Command.Simple("skills", "技能目录：/skills [show <名称> | reload]", args -> {
             println(agent.skillsCommand(args));
             return true;

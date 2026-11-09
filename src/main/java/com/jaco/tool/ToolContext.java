@@ -12,7 +12,14 @@ public record ToolContext(
         AtomicReference<Process> currentProcess,
         java.util.function.BooleanSupplier cancelled,
         Path archiveFile,
-        int maxToolResultChars, com.jaco.session.WorkflowService workflow) {
+        int maxToolResultChars, com.jaco.session.WorkflowService workflow, com.jaco.skill.SkillService skills) {
+
+    public ToolContext(Path workspaceRoot, ToolSandbox sandbox, String shellChoice,
+                       AtomicReference<Process> currentProcess,
+                       java.util.function.BooleanSupplier cancelled, Path archiveFile, int maxToolResultChars,
+                       com.jaco.session.WorkflowService workflow) {
+        this(workspaceRoot, sandbox, shellChoice, currentProcess, cancelled, archiveFile, maxToolResultChars, workflow, null);
+    }
 
     public ToolContext(Path workspaceRoot, ToolSandbox sandbox, String shellChoice,
                        AtomicReference<Process> currentProcess,
