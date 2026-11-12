@@ -68,4 +68,14 @@ class SkillRegistryTest {
         }
         assertThrows(IllegalArgumentException.class, () -> new SkillRegistry(null, root).resolve("escape"));
     }
+    @Test void documentedExamplesLoadWithTheirReferencedResources() throws Exception {
+        var registry = new SkillRegistry(null, Path.of("docs/examples/skills"));
+        assertEquals(2, registry.entries().size());
+        var review = registry.resolve("java-review");
+        assertTrue(review.body().contains("references/checklist.md"));
+        assertTrue(Files.isRegularFile(review.root().resolve("references/checklist.md")));
+        var plan = registry.resolve("test-plan");
+        assertTrue(plan.body().contains("templates/acceptance.md"));
+        assertTrue(Files.isRegularFile(plan.root().resolve("templates/acceptance.md")));
+    }
 }

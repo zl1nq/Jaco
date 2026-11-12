@@ -1,6 +1,7 @@
 package com.jaco.skill;
 
 import com.jaco.session.*;
+import com.jaco.tool.ToolException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.*;
@@ -82,5 +83,22 @@ class SkillServiceTest {
         assertTrue(page.contains("has_more: true"));
         assertTrue(service.list("nomatch", 0, 20, 8000).contains("total: 0"));
         assertThrows(RuntimeException.class, () -> service.list("", 0, 2, 10));
+    }
+    @Test void cumulativeBudgetFailurePreservesPreviouslyLoadedSkills() throws Exception {
+        var registry = registry("", "x".repeat(20000));
+        for (String name : java.util.List.of("second", "third")) {
+            Path file = dir.resolve("skills/" + name + "/SKILL.md"); Files.createDirectories(file.getParent());
+            Files.writeString(file, "---\nname: " + name + "\ndescription: Skill\n---\n" + "y".repeat(20000));
+        }
+        registry.reload();
+        var store = new SessionStore(dir.resolve("sessions"));
+        var owner = store.createNew();
+        var service = new SkillService(registry, owner, store, "t", () -> true, 100000);
+        service.load("review", false);
+        service.load("second", false);
+        String before = service.context();
+        assertThrows(ToolException.class, () -> service.load("third", false));
+        assertEquals(before, service.context());
+        assertEquals(2, Files.readAllLines(store.archivePath(owner)).size());
     }
 }

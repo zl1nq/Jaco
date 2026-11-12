@@ -700,4 +700,18 @@ class ConsoleAppRunningCommandTest {
             assertTrue(console.text().contains("没有找到技能"));
         }
     }
+    @Test void exitWithPendingProfileDoesNotCallModelOrDiscardQueue() throws Exception {
+        try (var agent = agent(null, new ToolRegistry())) {
+            Path profileFile = tmp.resolve("profile.json");
+            var profile = new com.jaco.memory.UserProfileStore(profileFile);
+            String project = com.jaco.memory.UserProfileStore.projectScope(tmp);
+            profile.enqueue("请解释此模块的实现", "", agent.session().id(), project);
+            assertEquals(1, profile.pendingCount(project));
+            agent.bindUserProfile(profile);
+            Console console = new Console();
+            console.readLine = args -> "/exit";
+            console.app(agent).run();
+            assertEquals(1, new com.jaco.memory.UserProfileStore(profileFile).pendingCount(project));
+        }
+    }
 }

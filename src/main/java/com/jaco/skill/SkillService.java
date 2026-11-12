@@ -123,7 +123,10 @@ public final class SkillService {
             if ((next + suffix).length() > 4000 || tokens(next + suffix) > contextLimit / 20) break;
             text = next;
         }
-        if ((text + suffix).length() > 4000 || tokens(text + suffix) > contextLimit / 20) return "";
+        if ((text + suffix).length() > 4000 || tokens(text + suffix) > contextLimit / 20) {
+            String fallback = "\n通过 skill_list 查询技能目录。";
+            return tokens(fallback) <= contextLimit / 20 ? fallback : "";
+        }
         return text + suffix;
     }
     private static String brief(String text, int length) {
